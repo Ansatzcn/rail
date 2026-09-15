@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-build" content="2026-09-15-mobile-station-wrap-v1">
+    <meta name="app-build" content="2026-09-15-mobile-station-hanging-indent-v1">
     <title>Rail</title>
     <style>
         * {
@@ -986,18 +986,14 @@
                 gap: 0.75rem;
             }
 
-            /* 手机端：仅当车站文字超过一行时，续行部分右对齐。 */
-            .train-station .station-line-first {
-                display: block;
-                white-space: nowrap;
+            /* 手机端：仅当车站文字实际换行时，续行与 ★ 后第一个汉字对齐。 */
+            .train-station.station-wrap-aligned {
+                box-sizing: border-box;
+                padding-left: var(--station-continuation-indent, 0px);
+                text-indent: calc(-1 * var(--station-continuation-indent, 0px));
                 text-align: left;
-            }
-
-            .train-station .station-line-rest {
-                display: block;
                 white-space: normal;
                 overflow-wrap: anywhere;
-                text-align: right;
             }
 
             #editModal,
@@ -1964,9 +1960,11 @@
             function resetMobileStationAlignment() {
                 document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
                     const fullText = element.dataset.stationText || '';
-                    if (element.textContent !== fullText || element.querySelector('.station-line-rest')) {
+                    if (element.textContent !== fullText || element.children.length) {
                         element.textContent = fullText;
                     }
+                    element.classList.remove('station-wrap-aligned');
+                    element.style.removeProperty('--station-continuation-indent');
                 });
             }
 
@@ -1976,12 +1974,15 @@
                 const probe = element.cloneNode(false);
                 const style = getComputedStyle(element);
                 probe.removeAttribute('data-station-text');
+                probe.classList.remove('station-wrap-aligned');
                 probe.style.position = 'fixed';
                 probe.style.left = '-100000px';
                 probe.style.top = '0';
                 probe.style.visibility = 'hidden';
                 probe.style.pointerEvents = 'none';
                 probe.style.margin = '0';
+                probe.style.padding = '0';
+                probe.style.textIndent = '0';
                 probe.style.width = `${element.clientWidth}px`;
                 probe.style.maxWidth = `${element.clientWidth}px`;
                 probe.style.height = 'auto';
@@ -2033,6 +2034,42 @@
                 return Math.max(1, Math.min(best, text.length));
             }
 
+            function findFirstHanAfterStar(text) {
+                const starIndex = text.indexOf('★');
+                if (starIndex < 0) return -1;
+                for (let index = starIndex + 1; index < text.length; index += 1) {
+                    if (/\p{Script=Han}/u.test(text[index])) return index;
+                }
+                return -1;
+            }
+
+            function measureStationContinuationIndent(element, text, hanIndex) {
+                if (hanIndex <= 0 || element.clientWidth <= 0) return 0;
+
+                const probe = document.createElement('span');
+                const style = getComputedStyle(element);
+                probe.style.position = 'fixed';
+                probe.style.left = '-100000px';
+                probe.style.top = '0';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.margin = '0';
+                probe.style.padding = '0';
+                probe.style.border = '0';
+                probe.style.whiteSpace = 'pre';
+                probe.style.font = style.font;
+                probe.style.fontFamily = style.fontFamily;
+                probe.style.fontSize = style.fontSize;
+                probe.style.fontWeight = style.fontWeight;
+                probe.style.fontStyle = style.fontStyle;
+                probe.style.letterSpacing = style.letterSpacing;
+                probe.textContent = text.slice(0, hanIndex);
+                document.body.appendChild(probe);
+                const width = probe.getBoundingClientRect().width;
+                probe.remove();
+                return Math.max(0, Math.min(width, element.clientWidth * 0.8));
+            }
+
             function applyMobileStationContinuationAlignment() {
                 cancelAnimationFrame(mobileStationAlignRaf);
                 mobileStationAlignRaf = requestAnimationFrame(() => {
@@ -2043,18 +2080,18 @@
                         const fullText = element.dataset.stationText || '';
                         if (!fullText) return;
 
+                        // 先按原始左对齐宽度判断是否真的超过一行；单行内容完全不处理。
                         const firstLineEnd = findFirstVisualLineEnd(element, fullText);
                         if (firstLineEnd >= fullText.length) return;
 
-                        const firstLine = document.createElement('span');
-                        firstLine.className = 'station-line-first';
-                        firstLine.textContent = fullText.slice(0, firstLineEnd);
+                        const hanIndex = findFirstHanAfterStar(fullText);
+                        if (hanIndex < 0) return;
 
-                        const continuation = document.createElement('span');
-                        continuation.className = 'station-line-rest';
-                        continuation.textContent = fullText.slice(firstLineEnd).replace(/^\s+/u, '');
+                        const indent = measureStationContinuationIndent(element, fullText, hanIndex);
+                        if (!(indent > 0)) return;
 
-                        element.replaceChildren(firstLine, continuation);
+                        element.style.setProperty('--station-continuation-indent', `${indent}px`);
+                        element.classList.add('station-wrap-aligned');
                     });
                 });
             }
