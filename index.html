@@ -368,22 +368,46 @@
             margin-top: 3px;
         }
 
-        /* 编辑页已选车站：唯一需要随内容增长而滚动的区域之一。 */
+        /* 编辑页车站列表：固定为独立滚动区域，绝不侵入底部按钮区。 */
         .edit-selected-stations {
             display: flex;
+            flex: 1 1 auto;
             flex-direction: column;
             flex-wrap: nowrap;
             gap: 0;
             width: 100%;
-            max-height: min(240px, 32dvh);
+            min-height: 88px;
+            max-height: 210px;
             overflow-x: hidden;
-            overflow-y: auto;
+            overflow-y: scroll;
             overscroll-behavior: contain;
             scrollbar-gutter: stable;
+            scrollbar-width: thin;
+            scrollbar-color: #94a3b8 #f1f5f9;
             -webkit-overflow-scrolling: touch;
             border: 1px solid #e2e8f0;
             border-radius: 14px;
             background: #ffffff;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar {
+            width: 9px;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-left: 1px solid #e2e8f0;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-thumb {
+            min-height: 36px;
+            border: 2px solid #f1f5f9;
+            border-radius: 999px;
+            background: #94a3b8;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
         }
 
         .edit-selected-stations:empty {
@@ -680,7 +704,7 @@
             margin-right: auto;
         }
 
-        /* 编辑弹窗本体不滚动：滚动严格限定在车站列表。 */
+        /* 编辑弹窗本体不滚动；车站列表和底部按钮分属两个互不重叠的区域。 */
         #editModal {
             align-items: center;
             overflow: hidden;
@@ -691,15 +715,31 @@
         }
 
         #editModal .dialog {
-            max-height: none;
+            display: flex;
+            flex-direction: column;
+            width: min(100%, 540px);
+            max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
             margin: auto;
-            overflow: visible;
+            overflow: hidden;
+        }
+
+        #editModal .edit-station-group {
+            flex: 1 1 auto;
+            min-height: 0;
+            margin-bottom: 0;
+        }
+
+        #editModal .edit-station-group .station-picker,
+        #editModal .edit-station-group .field-hint {
+            flex: 0 0 auto;
         }
 
         #editModal .dialog-actions {
             position: static;
-            margin-top: 1rem;
-            padding-top: 0.85rem;
+            z-index: 2;
+            flex: 0 0 auto;
+            margin-top: 0.9rem;
+            padding-top: 0.9rem;
             padding-bottom: max(0.15rem, env(safe-area-inset-bottom));
             border-top: 1px solid #e8edf4;
             background: #ffffff;
@@ -956,8 +996,8 @@
 
             #editModal .dialog {
                 width: 100%;
-                max-height: none;
-                overflow: visible;
+                max-height: calc(100dvh - 0.8rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+                overflow: hidden;
                 padding: 1.2rem;
                 border-radius: 20px;
             }
@@ -985,7 +1025,8 @@
             }
 
             .edit-selected-stations {
-                max-height: min(210px, 30dvh);
+                min-height: 76px;
+                max-height: min(180px, 26dvh);
             }
 
             .back-to-top {
@@ -1221,7 +1262,7 @@
                 <input type="text" id="editIntervalInput" autocomplete="off">
             </div>
 
-            <div class="form-group">
+            <div class="form-group edit-station-group">
                 <label for="editStationInput">车站</label>
                 <div class="station-picker">
                     <div class="station-combobox" id="editStationCombobox">
