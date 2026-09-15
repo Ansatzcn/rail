@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-build" content="2026-08-18-backtop-arrow-outside-table-v1">
+    <meta name="app-build" content="2026-09-15-edit-station-scroll-v1">
     <title>Rail</title>
     <style>
         * {
@@ -368,14 +368,19 @@
             margin-top: 3px;
         }
 
-        /* 编辑页已选车站：与车站下拉菜单保持一致，一行一个选项。 */
+        /* 编辑页已选车站：唯一需要随内容增长而滚动的区域之一。 */
         .edit-selected-stations {
             display: flex;
             flex-direction: column;
             flex-wrap: nowrap;
             gap: 0;
             width: 100%;
-            overflow: hidden;
+            max-height: min(240px, 32dvh);
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            -webkit-overflow-scrolling: touch;
             border: 1px solid #e2e8f0;
             border-radius: 14px;
             background: #ffffff;
@@ -675,8 +680,33 @@
             margin-right: auto;
         }
 
-        /* 编辑/配置弹窗：在手机、横屏和软键盘弹出时保持可滚动，操作按钮始终可见。 */
-        #editModal,
+        /* 编辑弹窗本体不滚动：滚动严格限定在车站列表。 */
+        #editModal {
+            align-items: center;
+            overflow: hidden;
+            padding-top: max(0.75rem, env(safe-area-inset-top));
+            padding-right: max(0.75rem, env(safe-area-inset-right));
+            padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+            padding-left: max(0.75rem, env(safe-area-inset-left));
+        }
+
+        #editModal .dialog {
+            max-height: none;
+            margin: auto;
+            overflow: visible;
+        }
+
+        #editModal .dialog-actions {
+            position: static;
+            margin-top: 1rem;
+            padding-top: 0.85rem;
+            padding-bottom: max(0.15rem, env(safe-area-inset-bottom));
+            border-top: 1px solid #e8edf4;
+            background: #ffffff;
+            backdrop-filter: none;
+        }
+
+        /* 配置弹窗内容较长，继续保留原来的弹窗滚动。 */
         #configModal {
             align-items: flex-start;
             overflow-x: hidden;
@@ -688,7 +718,6 @@
             padding-left: max(0.75rem, env(safe-area-inset-left));
         }
 
-        #editModal .dialog,
         #configModal .dialog {
             max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
             margin: auto;
@@ -699,7 +728,6 @@
             -webkit-overflow-scrolling: touch;
         }
 
-        #editModal .dialog-actions,
         #configModal .dialog-actions {
             position: sticky;
             bottom: 0;
@@ -926,7 +954,14 @@
                 padding-left: max(0.4rem, env(safe-area-inset-left));
             }
 
-            #editModal .dialog,
+            #editModal .dialog {
+                width: 100%;
+                max-height: none;
+                overflow: visible;
+                padding: 1.2rem;
+                border-radius: 20px;
+            }
+
             #configModal .dialog {
                 width: 100%;
                 max-height: calc(100dvh - 0.8rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
@@ -947,6 +982,10 @@
             #configModal .dialog-actions .btn {
                 flex: 1 1 0;
                 min-width: 0;
+            }
+
+            .edit-selected-stations {
+                max-height: min(210px, 30dvh);
             }
 
             .back-to-top {
