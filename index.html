@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-build" content="2026-09-15-edit-station-scroll-v1">
+    <meta name="app-build" content="2026-09-15-mobile-station-wrap-v1">
     <title>Rail</title>
     <style>
         * {
@@ -986,6 +986,20 @@
                 gap: 0.75rem;
             }
 
+            /* 手机端：仅当车站文字超过一行时，续行部分右对齐。 */
+            .train-station .station-line-first {
+                display: block;
+                white-space: nowrap;
+                text-align: left;
+            }
+
+            .train-station .station-line-rest {
+                display: block;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                text-align: right;
+            }
+
             #editModal,
             #configModal {
                 padding-top: max(0.4rem, env(safe-area-inset-top));
@@ -1944,6 +1958,107 @@
                 renderStationChips(editSelectedStations, pendingEditStations, 'edit');
             }
 
+            const mobileStationMedia = window.matchMedia('(max-width: 700px)');
+            let mobileStationAlignRaf = 0;
+
+            function resetMobileStationAlignment() {
+                document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
+                    const fullText = element.dataset.stationText || '';
+                    if (element.textContent !== fullText || element.querySelector('.station-line-rest')) {
+                        element.textContent = fullText;
+                    }
+                });
+            }
+
+            function findFirstVisualLineEnd(element, text) {
+                if (!text || element.clientWidth <= 0) return text.length;
+
+                const probe = element.cloneNode(false);
+                const style = getComputedStyle(element);
+                probe.removeAttribute('data-station-text');
+                probe.style.position = 'fixed';
+                probe.style.left = '-100000px';
+                probe.style.top = '0';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.margin = '0';
+                probe.style.width = `${element.clientWidth}px`;
+                probe.style.maxWidth = `${element.clientWidth}px`;
+                probe.style.height = 'auto';
+                probe.style.whiteSpace = 'normal';
+                probe.style.overflowWrap = 'anywhere';
+                probe.style.wordBreak = style.wordBreak;
+                probe.style.font = style.font;
+                probe.style.fontFamily = style.fontFamily;
+                probe.style.fontSize = style.fontSize;
+                probe.style.fontWeight = style.fontWeight;
+                probe.style.fontStyle = style.fontStyle;
+                probe.style.letterSpacing = style.letterSpacing;
+                probe.style.lineHeight = style.lineHeight;
+                probe.textContent = text;
+                document.body.appendChild(probe);
+
+                const textNode = probe.firstChild;
+                if (!textNode) {
+                    probe.remove();
+                    return text.length;
+                }
+
+                const lineCountForPrefix = end => {
+                    const range = document.createRange();
+                    range.setStart(textNode, 0);
+                    range.setEnd(textNode, end);
+                    return Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0).length;
+                };
+
+                if (lineCountForPrefix(text.length) <= 1) {
+                    probe.remove();
+                    return text.length;
+                }
+
+                let low = 1;
+                let high = text.length;
+                let best = 1;
+                while (low <= high) {
+                    const mid = Math.floor((low + high) / 2);
+                    if (lineCountForPrefix(mid) <= 1) {
+                        best = mid;
+                        low = mid + 1;
+                    } else {
+                        high = mid - 1;
+                    }
+                }
+
+                probe.remove();
+                return Math.max(1, Math.min(best, text.length));
+            }
+
+            function applyMobileStationContinuationAlignment() {
+                cancelAnimationFrame(mobileStationAlignRaf);
+                mobileStationAlignRaf = requestAnimationFrame(() => {
+                    resetMobileStationAlignment();
+                    if (!mobileStationMedia.matches) return;
+
+                    document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
+                        const fullText = element.dataset.stationText || '';
+                        if (!fullText) return;
+
+                        const firstLineEnd = findFirstVisualLineEnd(element, fullText);
+                        if (firstLineEnd >= fullText.length) return;
+
+                        const firstLine = document.createElement('span');
+                        firstLine.className = 'station-line-first';
+                        firstLine.textContent = fullText.slice(0, firstLineEnd);
+
+                        const continuation = document.createElement('span');
+                        continuation.className = 'station-line-rest';
+                        continuation.textContent = fullText.slice(firstLineEnd).replace(/^\s+/u, '');
+
+                        element.replaceChildren(firstLine, continuation);
+                    });
+                });
+            }
+
             function renderTable() {
                 sortEntries(state.entries);
                 countDisplay.textContent = String(state.entries.length);
@@ -1959,7 +2074,7 @@
                         : '';
                     const stationsHtml = item.stations.length
                         ? `<div class="train-stations">${item.stations.map(station =>
-                            `<span class="train-station">${escapeHtml(station)}</span>`
+                            `<span class="train-station" data-station-text="${escapeAttribute(station)}">${escapeHtml(station)}</span>`
                         ).join('')}</div>`
                         : '<div class="train-stations train-stations-empty">—</div>';
 
@@ -1976,6 +2091,7 @@
                         </tr>
                     `;
                 }).join('');
+                applyMobileStationContinuationAlignment();
             }
 
             function renderAll() {
@@ -3296,6 +3412,12 @@
             }
 
             window.addEventListener('scroll', updateBackToTopVisibility, { passive: true });
+            window.addEventListener('resize', applyMobileStationContinuationAlignment, { passive: true });
+            if (typeof mobileStationMedia.addEventListener === 'function') {
+                mobileStationMedia.addEventListener('change', applyMobileStationContinuationAlignment);
+            } else if (typeof mobileStationMedia.addListener === 'function') {
+                mobileStationMedia.addListener(applyMobileStationContinuationAlignment);
+            }
             backToTopBtn.addEventListener('click', () => {
                 const startY = window.scrollY || window.pageYOffset || 0;
                 if (startY <= 0) return;
