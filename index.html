@@ -1393,12 +1393,67 @@
             const NAMESPACE = `rail:${hashText(getPageIdentity())}`;
             const STATE_KEY = `${NAMESPACE}:state_v1`;
             const CONFIG_KEY = `${NAMESPACE}:config_v1`;
-            const TOKEN_LOCAL_KEY = `${NAMESPACE}:token_local`;
+            const TOKEN_PROFILE_KEY = `${NAMESPACE}:token_local`;
             const TOKEN_PROFILES_KEY = `${NAMESPACE}:token_profiles_v1`;
-            const TOKEN_SESSION_KEY = `${NAMESPACE}:token_session`;
+            const TOKEN_MEMORY_KEY = `${NAMESPACE}:token_session`;
             const SYNC_META_KEY = `${NAMESPACE}:sync_meta_v1`;
             const MAX_SYNC_BYTES = 750 * 1024;
             const AUTO_SYNC_DELAY = 700;
+
+            const persistentStorage = { name: 'rail-idb', map: new Map() };
+            const sessionMemoryStorage = { map: new Map() };
+
+            async function initPersistentStorage() {
+                if (!('indexedDB' in window)) return;
+                await new Promise(resolve => {
+                    const request = indexedDB.open('RailStorage', 1);
+                    request.onupgradeneeded = () => {
+                        const db = request.result;
+                        if (!db.objectStoreNames.contains('kv')) {
+                            db.createObjectStore('kv');
+                        }
+                    };
+                    request.onsuccess = () => {
+                        const db = request.result;
+                        const tx = db.transaction('kv', 'readonly');
+                        const store = tx.objectStore('kv');
+                        const getAll = store.openCursor();
+                        getAll.onsuccess = event => {
+                            const cursor = event.target.result;
+                            if (cursor) {
+                                persistentStorage.map.set(cursor.key, cursor.value);
+                                cursor.continue();
+                            } else {
+                                db.close();
+                                resolve();
+                            }
+                        };
+                    };
+                    request.onerror = () => resolve();
+                });
+            }
+
+            function persistValue(key, value) {
+                if (!('indexedDB' in window)) return;
+                const request = indexedDB.open('RailStorage', 1);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    const tx = db.transaction('kv', 'readwrite');
+                    tx.objectStore('kv').put(value, key);
+                    tx.oncomplete = () => db.close();
+                };
+            }
+
+            function removePersistedValue(key) {
+                if (!('indexedDB' in window)) return;
+                const request = indexedDB.open('RailStorage', 1);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    const tx = db.transaction('kv', 'readwrite');
+                    tx.objectStore('kv').delete(key);
+                    tx.oncomplete = () => db.close();
+                };
+            }
 
             let state = { entries: [], stations: [] };
             let tokenProfiles = [];
@@ -1425,7 +1480,7 @@
             let syncQueued = false;
             let autoSyncTimer = null;
             let toastTimer = null;
-            let hadStoredLocalState = false;
+            let hadStoredState = false;
 
             const trainInput = document.getElementById('trainInput');
             const stationInput = document.getElementById('stationInput');
@@ -1476,7 +1531,7 @@
 
             function safeGet(storage, key) {
                 try {
-                    return storage.getItem(key);
+                    return storage.map.get(key) ?? null;
                 } catch (error) {
                     console.error('读取存储失败:', error);
                     return null;
@@ -1485,7 +1540,8 @@
 
             function safeSet(storage, key, value) {
                 try {
-                    storage.setItem(key, value);
+                    storage.map.set(key, value);
+                    if (storage === persistentStorage) persistValue(key, value);
                     return true;
                 } catch (error) {
                     console.error('写入存储失败:', error);
@@ -1496,7 +1552,8 @@
 
             function safeRemove(storage, key) {
                 try {
-                    storage.removeItem(key);
+                    storage.map.delete(key);
+                    if (storage === persistentStorage) removePersistedValue(key);
                 } catch (error) {
                     console.error('删除存储失败:', error);
                 }
@@ -1690,16 +1747,16 @@
                     .replace(/>/g, '&gt;');
             }
 
-            function saveStateToLocal() {
+            function saveStateToStorage() {
                 state = normalizePayload(state);
                 sortEntries(state.entries);
                 state.stations = sortStationOptions(state.stations);
-                safeSet(localStorage, STATE_KEY, JSON.stringify(makeSerializableState(state)));
+                safeSet(persistentStorage, STATE_KEY, JSON.stringify(makeSerializableState(state)));
             }
 
-            function loadStateFromLocal() {
-                const stored = safeGet(localStorage, STATE_KEY);
-                hadStoredLocalState = stored !== null;
+            function loadStateFromStorage() {
+                const stored = safeGet(persistentStorage, STATE_KEY);
+                hadStoredState = stored !== null;
 
                 if (!stored) {
                     state = { entries: [], stations: [] };
@@ -1716,7 +1773,7 @@
             }
 
             async function autoImportRailData() {
-                if (hadStoredLocalState) return false;
+                if (hadStoredState) return false;
 
                 try {
                     const response = await fetch('rail_data.json', { cache: 'no-store' });
@@ -1736,8 +1793,8 @@
                     const imported = normalizePayload(JSON.parse(text));
                     assertSyncSize(imported);
                     state = imported;
-                    saveStateToLocal();
-                    hadStoredLocalState = true;
+                    saveStateToStorage();
+                    hadStoredState = true;
                     renderAll();
                     return true;
                 } catch (error) {
@@ -2136,7 +2193,7 @@
                 renderStationOptions();
                 renderPendingStations();
                 renderTable();
-                saveStateToLocal();
+                saveStateToStorage();
             }
 
             function addStationValues(values, target) {
@@ -2587,7 +2644,7 @@
             }
 
             function loadTokenProfiles() {
-                const stored = safeGet(localStorage, TOKEN_PROFILES_KEY);
+                const stored = safeGet(persistentStorage, TOKEN_PROFILES_KEY);
                 if (!stored) return [];
                 try {
                     const parsed = JSON.parse(stored);
@@ -2600,7 +2657,7 @@
             }
 
             function saveTokenProfiles() {
-                safeSet(localStorage, TOKEN_PROFILES_KEY, JSON.stringify(tokenProfiles));
+                safeSet(persistentStorage, TOKEN_PROFILES_KEY, JSON.stringify(tokenProfiles));
             }
 
             function getTokenProfileLabel(profile, index) {
@@ -2664,7 +2721,7 @@
             }
 
             function persistConfigMetadata() {
-                safeSet(localStorage, CONFIG_KEY, JSON.stringify({
+                safeSet(persistentStorage, CONFIG_KEY, JSON.stringify({
                     owner: config.owner,
                     repo: config.repo,
                     file: config.file,
@@ -2735,7 +2792,7 @@
 
             function loadConfig() {
                 let parsed = {};
-                const stored = safeGet(localStorage, CONFIG_KEY);
+                const stored = safeGet(persistentStorage, CONFIG_KEY);
 
                 if (stored) {
                     try {
@@ -2747,7 +2804,7 @@
 
                 tokenProfiles = loadTokenProfiles();
 
-                const legacyToken = safeGet(localStorage, TOKEN_LOCAL_KEY) || '';
+                const legacyToken = safeGet(persistentStorage, TOKEN_PROFILE_KEY) || '';
                 if (legacyToken && !tokenProfiles.some(item => item.token === legacyToken)) {
                     tokenProfiles.push({
                         id: createTokenProfileId(),
@@ -2759,7 +2816,7 @@
                         updatedAt: new Date().toISOString()
                     });
                     saveTokenProfiles();
-                    safeRemove(localStorage, TOKEN_LOCAL_KEY);
+                    safeRemove(persistentStorage, TOKEN_PROFILE_KEY);
                 }
 
                 const requestedId = typeof parsed.activeTokenId === 'string'
@@ -2768,7 +2825,7 @@
                 const activeProfile = tokenProfiles.find(item => item.id === requestedId)
                     || tokenProfiles[0]
                     || null;
-                const sessionToken = safeGet(sessionStorage, TOKEN_SESSION_KEY) || '';
+                const sessionToken = safeGet(sessionMemoryStorage, TOKEN_MEMORY_KEY) || '';
                 const saveToken = typeof parsed.saveToken === 'boolean' ? parsed.saveToken : true;
 
                 config = {
@@ -2811,10 +2868,10 @@
 
                 if (config.saveToken) {
                     config.activeTokenId = upsertCurrentTokenProfile();
-                    safeRemove(sessionStorage, TOKEN_SESSION_KEY);
+                    safeRemove(sessionMemoryStorage, TOKEN_MEMORY_KEY);
                 } else {
                     config.activeTokenId = '';
-                    safeSet(sessionStorage, TOKEN_SESSION_KEY, config.token);
+                    safeSet(sessionMemoryStorage, TOKEN_MEMORY_KEY, config.token);
                 }
 
                 persistConfigMetadata();
@@ -2887,7 +2944,7 @@
             }
 
             function loadSyncMeta() {
-                const stored = safeGet(localStorage, SYNC_META_KEY);
+                const stored = safeGet(persistentStorage, SYNC_META_KEY);
                 if (!stored) {
                     syncMeta = createEmptySyncMeta();
                     return;
@@ -2909,7 +2966,7 @@
             }
 
             function saveSyncMeta() {
-                safeSet(localStorage, SYNC_META_KEY, JSON.stringify(syncMeta));
+                safeSet(persistentStorage, SYNC_META_KEY, JSON.stringify(syncMeta));
                 updateLastSyncDisplay();
             }
 
@@ -3126,7 +3183,7 @@
                     return adoptRemote(remote, showMessage);
                 }
 
-                if (!hasBaseline && !hadStoredLocalState && localSnapshot.entries.length === 0) {
+                if (!hasBaseline && !hadStoredState && localSnapshot.entries.length === 0) {
                     return adoptRemote(remote, showMessage);
                 }
 
@@ -3480,9 +3537,10 @@
                 requestAnimationFrame(animate);
             });
 
+            await initPersistentStorage();
             loadConfig();
             loadSyncMeta();
-            loadStateFromLocal();
+            loadStateFromStorage();
             await autoImportRailData();
             updateLastSyncDisplay();
             updateBackToTopVisibility();
