@@ -1,6 +1,1202 @@
 <!DOCTYPE html>
-Rail
-Rail 未配置
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="app-build" content="2026-09-15-mobile-station-hanging-indent-v1">
+    <title>Rail</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            padding: 2rem 1rem;
+            background: #f5f7fa;
+            color: #0f172a;
+            font-family: "Times New Roman", "Microsoft YaHei", "微软雅黑", sans-serif;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .container {
+            width: min(100%, 1000px);
+            margin: 0 auto;
+            padding: 2rem 1.8rem;
+            border-radius: 30px;
+            background: #ffffff;
+            box-shadow: 0 20px 42px -14px rgba(15, 23, 42, 0.22);
+        }
+
+        .page-title {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.8rem;
+            border-bottom: 2px solid #e8edf4;
+            font-size: 2.2rem;
+            font-weight: 650;
+            letter-spacing: -0.04em;
+        }
+
+        .cloud-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0.35rem 0.9rem;
+            border-radius: 999px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 0.82rem;
+            font-weight: 500;
+            letter-spacing: 0;
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #94a3b8;
+        }
+
+        .status-dot.online {
+            background: #22c55e;
+        }
+
+        .status-dot.offline {
+            background: #ef4444;
+        }
+
+        .status-dot.syncing {
+            background: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 1.7rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #e8edf4;
+        }
+
+        .toolbar-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 9px;
+        }
+
+        .btn {
+            min-height: 36px;
+            padding: 0.45rem 1.1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 0.86rem;
+            font-weight: 600;
+            transition: 0.15s ease;
+        }
+
+        .btn:hover {
+            background: #f1f5f9;
+            border-color: #94a3b8;
+        }
+
+        .btn-sync {
+            border-color: #1E40AF;
+            background: #1E40AF;
+            color: #ffffff;
+        }
+
+        .btn-sync:hover {
+            border-color: #1E3A8A;
+            background: #1E3A8A;
+        }
+
+        .btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .last-sync {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+
+        .add-section {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 23px;
+            background: #f8fafc;
+        }
+
+        .add-section h2,
+        .list-header h2 {
+            color: #0f172a;
+            font-size: 1.3rem;
+            font-weight: 650;
+        }
+
+        .add-section h2 {
+            margin-bottom: 1rem;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-group label {
+            color: #475569;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+
+        .required-mark {
+            color: #dc2626;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            min-height: 45px;
+            padding: 0.7rem 1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 15px;
+            background: #ffffff;
+            color: #0f172a;
+            font-family: inherit;
+            font-size: 0.96rem;
+            transition: 0.15s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: 2px solid #93b4ff;
+            outline-offset: 1px;
+            border-color: transparent;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+        }
+
+        .field-hint {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            line-height: 1.45;
+        }
+
+        .station-picker {
+            display: flex;
+            align-items: flex-start;
+            width: 100%;
+        }
+
+        .station-combobox {
+            position: relative;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .station-combobox input {
+            width: 100%;
+            padding-right: 2.8rem;
+        }
+
+        .station-dropdown-toggle {
+            position: absolute;
+            top: 50%;
+            right: 0.45rem;
+            width: 2rem;
+            height: 2rem;
+            transform: translateY(-50%);
+            border: 0;
+            border-radius: 10px;
+            background: transparent;
+            color: #64748b;
+            font-size: 1rem;
+            line-height: 1;
+        }
+
+        .station-dropdown-toggle:hover,
+        .station-dropdown-toggle[aria-expanded="true"] {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        .station-dropdown {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            z-index: 80;
+            max-height: 240px;
+            overflow-y: auto;
+            padding: 0.35rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+        }
+
+        .station-dropdown.hidden {
+            display: none;
+        }
+
+        .station-dropdown-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            align-items: stretch;
+            gap: 6px;
+            width: 100%;
+            min-width: 0;
+            padding: 0.2rem 0;
+            border-bottom: 1px solid #eef2f7;
+        }
+
+        .station-dropdown-row:last-child {
+            border-bottom: 0;
+        }
+
+        .station-dropdown-option,
+        .station-selected-label {
+            display: block;
+            width: 100%;
+            min-width: 0;
+            padding: 0.58rem 0.68rem;
+            border: 0;
+            border-radius: 9px;
+            background: transparent;
+            color: #0f172a;
+            text-align: left;
+            font-size: 0.9rem;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .station-dropdown-option:hover,
+        .station-dropdown-option:focus-visible,
+        .station-dropdown-option.keyboard-active {
+            outline: none;
+            background: #f1f5f9;
+        }
+
+        .station-dropdown-option.keyboard-active {
+            box-shadow: inset 0 0 0 2px #93b4ff;
+        }
+
+        .station-dropdown-edit,
+        .station-dropdown-delete {
+            align-self: center;
+            min-height: 32px;
+            padding: 0.35rem 0.56rem;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            font-size: 0.76rem;
+            font-weight: 650;
+            white-space: nowrap;
+        }
+
+        .station-dropdown-edit {
+            color: #1E40AF;
+        }
+
+        .station-dropdown-edit:hover,
+        .station-dropdown-edit:focus-visible {
+            outline: none;
+            background: #dbeafe;
+            color: #1E3A8A;
+        }
+
+        .station-dropdown-delete {
+            color: #b91c1c;
+        }
+
+        .station-dropdown-delete:hover,
+        .station-dropdown-delete:focus-visible {
+            outline: none;
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .station-dropdown-empty {
+            padding: 0.65rem 0.75rem;
+            color: #94a3b8;
+            font-size: 0.84rem;
+            text-align: center;
+        }
+
+        .selected-stations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            min-height: 0;
+        }
+
+        .selected-stations:not(:empty) {
+            margin-top: 3px;
+        }
+
+        /* 编辑页车站列表：固定为独立滚动区域，绝不侵入底部按钮区。 */
+        .edit-selected-stations {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            flex-wrap: nowrap;
+            gap: 0;
+            width: 100%;
+            min-height: 88px;
+            max-height: 210px;
+            overflow-x: hidden;
+            overflow-y: scroll;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            scrollbar-width: thin;
+            scrollbar-color: #94a3b8 #f1f5f9;
+            -webkit-overflow-scrolling: touch;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            background: #ffffff;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar {
+            width: 9px;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-left: 1px solid #e2e8f0;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-thumb {
+            min-height: 36px;
+            border: 2px solid #f1f5f9;
+            border-radius: 999px;
+            background: #94a3b8;
+        }
+
+        .edit-selected-stations::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        .edit-selected-stations:empty {
+            display: none;
+        }
+
+        .edit-selected-stations .station-dropdown-row {
+            padding: 0.2rem 0.35rem;
+        }
+
+        .station-selected-label {
+            cursor: text;
+        }
+
+        .station-selected-inline-input {
+            width: 100%;
+            min-width: 0;
+            border: 1px solid #93c5fd;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #0f172a;
+            padding: 0.38rem 0.55rem;
+            font: inherit;
+            line-height: 1.25;
+            outline: 2px solid rgba(37, 99, 235, 0.18);
+            outline-offset: 0;
+        }
+
+        .station-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 100%;
+            padding: 0.3rem 0.38rem 0.3rem 0.7rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 0.82rem;
+            line-height: 1.2;
+        }
+
+        .station-chip span {
+            overflow-wrap: anywhere;
+        }
+
+        .station-chip-remove {
+            width: 22px;
+            height: 22px;
+            border: 0;
+            border-radius: 50%;
+            background: #e2e8f0;
+            color: #475569;
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+
+        .station-chip-remove:hover {
+            background: #fecaca;
+            color: #991b1b;
+        }
+
+        .add-button {
+            grid-column: 1 / -1;
+            min-height: 46px;
+            margin-top: 0.2rem;
+            border: 0;
+            border-radius: 999px;
+            background: #1e293b;
+            color: #ffffff;
+            font-weight: 700;
+            transition: 0.15s ease;
+        }
+
+        .add-button:hover {
+            background: #0f172a;
+            transform: translateY(-1px);
+        }
+
+        .list-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 0.8rem;
+        }
+
+        .count-badge {
+            min-width: 38px;
+            padding: 0.22rem 0.8rem;
+            border-radius: 999px;
+            background: #e8edf4;
+            color: #334155;
+            text-align: center;
+            font-size: 0.8rem;
+            font-weight: 650;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+        }
+
+        .rail-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: auto;
+        }
+
+        .rail-table th {
+            padding: 0.9rem 1.15rem;
+            border-bottom: 2px solid #cbd5e1;
+            background: #f1f5f9;
+            color: #1e293b;
+            text-align: left;
+            white-space: nowrap;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .rail-table td {
+            padding: 0.85rem 1.15rem;
+            border-bottom: 1px solid #edf2f7;
+            vertical-align: middle;
+            line-height: 1.55;
+        }
+
+        .rail-table tbody tr {
+            display: table-row;
+        }
+
+        .rail-table tbody tr:hover {
+            background: #fafcff;
+        }
+
+        .rail-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+
+        /* 每个车次占一行；车站按原顺序显示在车次下方。 */
+        .col-train {
+            min-width: 150px;
+            color: #0f172a;
+            font-weight: 700;
+            vertical-align: top !important;
+        }
+
+        .train-interval {
+            margin-top: 0.25rem;
+            color: #64748b;
+            font-family: inherit;
+            font-size: 0.9em;
+            font-weight: 700;
+            line-height: 1.55;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .train-stations {
+            margin-top: 0.28rem;
+            color: #334155;
+            font-weight: 400;
+            line-height: 1.55;
+        }
+
+        .train-station {
+            display: block;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .train-stations-empty {
+            color: #94a3b8;
+        }
+
+        .rail-table tbody tr.train-group-start:not(:first-child) td {
+            border-top: 2px solid #dbe3ed;
+        }
+
+        .col-train {
+            vertical-align: top !important;
+        }
+
+        .train-title-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 1rem;
+            width: 100%;
+        }
+
+        .train-title-text {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .action-btn {
+            margin: 0 2px;
+            padding: 0.28rem 0.72rem;
+            border: 0;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 650;
+        }
+
+        .edit-btn {
+            flex: 0 0 auto;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            color: #64748b;
+            font-size: 0.8rem;
+            font-weight: 500;
+            line-height: 1.55;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        .edit-btn:hover,
+        .edit-btn:focus-visible {
+            color: #1E3A8A;
+            outline: none;
+        }
+
+        .delete-btn {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .empty-row td {
+            padding: 2.6rem 1rem;
+            background: #fafcff;
+            color: #94a3b8;
+            text-align: center;
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(5px);
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .dialog {
+            width: min(100%, 540px);
+            padding: 1.8rem;
+            border-radius: 26px;
+            background: #ffffff;
+            box-shadow: 0 30px 70px rgba(15, 23, 42, 0.28);
+        }
+
+        .dialog h3 {
+            margin-bottom: 0.3rem;
+            font-size: 1.3rem;
+        }
+
+        .dialog-desc {
+            margin-bottom: 1.1rem;
+            padding-bottom: 0.8rem;
+            border-bottom: 1px solid #e8edf4;
+            color: #64748b;
+            font-size: 0.87rem;
+            line-height: 1.55;
+        }
+
+        .dialog .form-group {
+            margin-bottom: 0.95rem;
+        }
+
+        .dialog-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 9px;
+            margin-top: 1.2rem;
+        }
+
+        .dialog-actions .btn {
+            min-width: 88px;
+        }
+
+        #editModal .dialog-actions .btn-danger {
+            margin-right: auto;
+        }
+
+        /* 编辑弹窗本体不滚动；车站列表和底部按钮分属两个互不重叠的区域。 */
+        #editModal {
+            align-items: center;
+            overflow: hidden;
+            padding-top: max(0.75rem, env(safe-area-inset-top));
+            padding-right: max(0.75rem, env(safe-area-inset-right));
+            padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+            padding-left: max(0.75rem, env(safe-area-inset-left));
+        }
+
+        #editModal .dialog {
+            display: flex;
+            flex-direction: column;
+            width: min(100%, 540px);
+            max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+            margin: auto;
+            overflow: hidden;
+        }
+
+        #editModal .edit-station-group {
+            flex: 1 1 auto;
+            min-height: 0;
+            margin-bottom: 0;
+        }
+
+        #editModal .edit-station-group .station-picker,
+        #editModal .edit-station-group .field-hint {
+            flex: 0 0 auto;
+        }
+
+        #editModal .dialog-actions {
+            position: static;
+            z-index: 2;
+            flex: 0 0 auto;
+            margin-top: 0.9rem;
+            padding-top: 0.9rem;
+            padding-bottom: max(0.15rem, env(safe-area-inset-bottom));
+            border-top: 1px solid #e8edf4;
+            background: #ffffff;
+            backdrop-filter: none;
+        }
+
+        /* 配置弹窗内容较长，继续保留原来的弹窗滚动。 */
+        #configModal {
+            align-items: flex-start;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-top: max(0.75rem, env(safe-area-inset-top));
+            padding-right: max(0.75rem, env(safe-area-inset-right));
+            padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+            padding-left: max(0.75rem, env(safe-area-inset-left));
+        }
+
+        #configModal .dialog {
+            max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+            margin: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #configModal .dialog-actions {
+            position: sticky;
+            bottom: 0;
+            z-index: 4;
+            margin-top: 1rem;
+            padding-top: 0.85rem;
+            padding-bottom: max(0.15rem, env(safe-area-inset-bottom));
+            border-top: 1px solid #e8edf4;
+            background: rgba(255, 255, 255, 0.97);
+            backdrop-filter: blur(8px);
+        }
+
+        .btn-primary {
+            border-color: #1e293b;
+            background: #1e293b;
+            color: #ffffff;
+        }
+
+        .btn-primary:hover {
+            border-color: #0f172a;
+            background: #0f172a;
+        }
+
+        .btn-danger {
+            border-color: #fecaca;
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .btn-danger:hover {
+            border-color: #fca5a5;
+            background: #fecaca;
+        }
+
+        .checkbox-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            margin-top: 0.4rem;
+            color: #475569;
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
+        .checkbox-row input {
+            width: auto;
+            min-height: auto;
+            margin-top: 3px;
+        }
+
+        .token-profile-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .token-profile-btn {
+            min-height: 45px;
+            padding: 0.65rem 0.85rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 13px;
+            background: #f8fafc;
+            color: #334155;
+            font-family: inherit;
+            font-size: 0.82rem;
+            font-weight: 650;
+            white-space: nowrap;
+        }
+
+        .token-profile-btn:hover {
+            background: #eef2f7;
+        }
+
+        .token-profile-btn.danger {
+            border-color: #fecaca;
+            background: #fff7f7;
+            color: #991b1b;
+        }
+
+        .token-profile-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        .token-save-hint {
+            margin-left: 25px;
+        }
+
+        .hint-link {
+            color: #1E40AF;
+            text-decoration: none;
+        }
+
+        .hint-link:hover {
+            text-decoration: underline;
+        }
+
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: 28px;
+            z-index: 1500;
+            max-width: min(90vw, 640px);
+            padding: 0.78rem 1.5rem;
+            transform: translateX(-50%);
+            border-radius: 999px;
+            background: #1E40AF;
+            color: #ffffff;
+            text-align: center;
+            font-size: 0.88rem;
+            font-weight: 600;
+            box-shadow: 0 12px 34px rgba(15, 23, 42, 0.25);
+        }
+
+        .toast.success {
+            background: #16a34a;
+        }
+
+        .toast.error {
+            background: #dc2626;
+        }
+
+        .toast.hidden {
+            display: none;
+        }
+
+        .back-to-top {
+            position: fixed;
+            right: max(2px, calc((100vw - min(calc(100vw - 2rem), 1100px)) / 2 - 14px));
+            top: 70%;
+            z-index: 900;
+            width: 14px;
+            height: 32px;
+            padding: 0;
+            transform: translateY(-50%);
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            color: #1E40AF;
+            font-family: "Times New Roman", "Microsoft YaHei", "微软雅黑", sans-serif;
+            font-size: 0;
+            font-weight: 900;
+            line-height: 1;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            box-shadow: none;
+            transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease;
+        }
+
+        .back-to-top-icon {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border: 0;
+            border-radius: 50%;
+            background: #1E40AF;
+            transform: none;
+        }
+
+        .back-to-top.visible {
+            opacity: 0.96;
+            visibility: visible;
+            pointer-events: auto;
+        }
+
+        .back-to-top:hover,
+        .back-to-top:focus-visible {
+            opacity: 1;
+            color: #1E3A8A;
+            background: transparent;
+            transform: translateY(calc(-50% - 2px));
+            outline: none;
+        }
+
+        .back-to-top:hover .back-to-top-icon,
+        .back-to-top:focus-visible .back-to-top-icon {
+            background: #1E3A8A;
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 0.8rem;
+            }
+
+            .container {
+                padding: 1.25rem;
+                border-radius: 22px;
+            }
+
+            .page-title {
+                font-size: 1.8rem;
+            }
+
+            .toolbar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .toolbar-group {
+                justify-content: center;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .rail-table th,
+            .rail-table td {
+                padding: 0.7rem 0.8rem;
+                font-size: 0.85rem;
+            }
+
+            .train-title-row {
+                gap: 0.75rem;
+            }
+
+            /* 手机端：仅当车站文字实际换行时，续行与 ★ 后第一个汉字对齐。 */
+            .train-station.station-wrap-aligned {
+                box-sizing: border-box;
+                padding-left: var(--station-continuation-indent, 0px);
+                text-indent: calc(-1 * var(--station-continuation-indent, 0px));
+                text-align: left;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+
+            #editModal,
+            #configModal {
+                padding-top: max(0.4rem, env(safe-area-inset-top));
+                padding-right: max(0.4rem, env(safe-area-inset-right));
+                padding-bottom: max(0.4rem, env(safe-area-inset-bottom));
+                padding-left: max(0.4rem, env(safe-area-inset-left));
+            }
+
+            #editModal .dialog {
+                width: 100%;
+                max-height: calc(100dvh - 0.8rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+                overflow: hidden;
+                padding: 1.2rem;
+                border-radius: 20px;
+            }
+
+            #configModal .dialog {
+                width: 100%;
+                max-height: calc(100dvh - 0.8rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+                padding: 1.2rem;
+                border-radius: 20px;
+            }
+
+            #editModal .dialog-actions,
+            #configModal .dialog-actions {
+                gap: 8px;
+                margin-right: -0.15rem;
+                margin-left: -0.15rem;
+                padding-right: 0.15rem;
+                padding-left: 0.15rem;
+            }
+
+            #editModal .dialog-actions .btn,
+            #configModal .dialog-actions .btn {
+                flex: 1 1 0;
+                min-width: 0;
+            }
+
+            .edit-selected-stations {
+                min-height: 76px;
+                max-height: min(180px, 26dvh);
+            }
+
+            .back-to-top {
+                right: max(1px, calc((100vw - calc(100vw - 1.6rem)) / 2 - 12px));
+                width: 12px;
+                height: 30px;
+            }
+
+            .back-to-top-icon {
+                width: 7px;
+                height: 7px;
+            }
+        }
+
+        /* ===== 总表文字统一纯黑 ===== */
+        .rail-table,
+        .rail-table th,
+        .rail-table td,
+        .rail-table th *,
+        .rail-table td *,
+        .rail-table .col-train,
+        .rail-table .train-title-text,
+        .rail-table .train-interval,
+        .rail-table .train-stations,
+        .rail-table .train-station,
+        .rail-table .train-stations-empty,
+        .rail-table .edit-btn,
+        .rail-table .edit-btn:hover,
+        .rail-table .edit-btn:focus-visible,
+        .rail-table .empty-row td {
+            color: #000 !important;
+        }
+
+        /* ===== Rail 最终主题与总表规则 ===== */
+
+        /* 主色 / 悬停色 */
+        .btn-sync,
+        .add-button,
+        .btn-primary {
+            border-color: #1E40AF !important;
+            background: #1E40AF !important;
+            color: #fff !important;
+        }
+
+        .btn-sync:hover,
+        .add-button:hover,
+        .btn-primary:hover {
+            border-color: #1E3A8A !important;
+            background: #1E3A8A !important;
+            color: #fff !important;
+        }
+
+        .hint-link,
+        .station-dropdown-edit {
+            color: #1E40AF !important;
+        }
+
+        .hint-link:hover,
+        .station-dropdown-edit:hover,
+        .station-dropdown-edit:focus-visible {
+            color: #1E3A8A !important;
+        }
+
+        /* 总表：车次 1.1rem，其它 1rem；仅区间使用主色，其它纯黑 */
+        .rail-table,
+        .rail-table th,
+        .rail-table td,
+        .rail-table .col-train,
+        .rail-table .train-interval,
+        .rail-table .train-stations,
+        .rail-table .train-station,
+        .rail-table .train-stations-empty,
+        .rail-table .edit-btn,
+        .rail-table .edit-btn:hover,
+        .rail-table .edit-btn:focus-visible,
+        .rail-table .empty-row td {
+            font-size: 1rem !important;
+            color: #000 !important;
+        }
+
+        .rail-table .train-title-text {
+            font-size: 1.1rem !important;
+            color: #000 !important;
+        }
+
+        .rail-table .train-interval {
+            font-size: 1rem !important;
+            color: #1E40AF !important;
+        }
+
+        /* ===== 回到顶部：完全采用 Press 最终版尺寸和位置 ===== */
+        .back-to-top {
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            position: fixed !important;
+            right: 16px !important;
+            top: 70% !important;
+            z-index: 2147483647 !important;
+            display: block;
+            width: 25px !important;
+            height: 25px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            transform: none !important;
+            border: 0 !important;
+            border-radius: 50% !important;
+            background: #1E40AF !important;
+            color: transparent !important;
+            cursor: pointer !important;
+            touch-action: manipulation;
+            font-size: 0 !important;
+            line-height: 0 !important;
+            overflow: hidden !important;
+            box-shadow: none !important;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .back-to-top.visible {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+
+        .back-to-top:hover {
+            background: #1E40AF !important;
+            color: transparent !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .back-to-top:focus-visible {
+            background: #1E40AF !important;
+            color: transparent !important;
+            transform: none !important;
+            box-shadow: none !important;
+            outline: 2px solid #93c5fd !important;
+            outline-offset: 3px !important;
+        }
+
+        .back-to-top-icon,
+        .back-to-top::before,
+        .back-to-top::after {
+            display: none !important;
+            content: none !important;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <h1 class="page-title">
+            Rail
+            <span class="cloud-status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">未配置</span>
+            </span>
+        </h1>
+
+        <section class="toolbar" aria-label="工具栏">
+            <div class="toolbar-group">
                 <button type="button" class="btn btn-sync" id="syncBtn">同步</button>
                 <button type="button" class="btn" id="configBtn">配置</button>
                 <button type="button" class="btn" id="exportBtn">导出</button>
@@ -205,7 +1401,7 @@ Rail 未配置
             const AUTO_SYNC_DELAY = 700;
 
             const persistentStorage = { name: 'rail-idb', map: new Map() };
-            /* 持久化统一使用 IndexedDB；不使用 localStorage/sessionStorage。 */
+            const sessionMemoryStorage = { map: new Map() };
 
             async function initPersistentStorage() {
                 if (!('indexedDB' in window)) return;
@@ -815,108 +2011,146 @@ Rail 未配置
                 renderStationChips(editSelectedStations, pendingEditStations, 'edit');
             }
 
-
             const mobileStationMedia = window.matchMedia('(max-width: 700px)');
             let mobileStationAlignRaf = 0;
 
             function resetMobileStationAlignment() {
                 document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
                     const fullText = element.dataset.stationText || '';
-                    element.textContent = fullText;
+                    if (element.textContent !== fullText || element.children.length) {
+                        element.textContent = fullText;
+                    }
                     element.classList.remove('station-wrap-aligned');
-                    element.style.removeProperty('--station-line-count');
+                    element.style.removeProperty('--station-continuation-indent');
                 });
             }
 
-            // 手机端车站多行排版：
-            // 第一行左对齐；
-            // 后续行保持字符顺序从左到右；
-            // 若该行不足一整行，则整行靠右占位。
-            function applyMobileStationAlignment() {
-                cancelAnimationFrame(mobileStationAlignRaf);
+            function findFirstVisualLineEnd(element, text) {
+                if (!text || element.clientWidth <= 0) return text.length;
 
+                const probe = element.cloneNode(false);
+                const style = getComputedStyle(element);
+                probe.removeAttribute('data-station-text');
+                probe.classList.remove('station-wrap-aligned');
+                probe.style.position = 'fixed';
+                probe.style.left = '-100000px';
+                probe.style.top = '0';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.margin = '0';
+                probe.style.padding = '0';
+                probe.style.textIndent = '0';
+                probe.style.width = `${element.clientWidth}px`;
+                probe.style.maxWidth = `${element.clientWidth}px`;
+                probe.style.height = 'auto';
+                probe.style.whiteSpace = 'normal';
+                probe.style.overflowWrap = 'anywhere';
+                probe.style.wordBreak = style.wordBreak;
+                probe.style.font = style.font;
+                probe.style.fontFamily = style.fontFamily;
+                probe.style.fontSize = style.fontSize;
+                probe.style.fontWeight = style.fontWeight;
+                probe.style.fontStyle = style.fontStyle;
+                probe.style.letterSpacing = style.letterSpacing;
+                probe.style.lineHeight = style.lineHeight;
+                probe.textContent = text;
+                document.body.appendChild(probe);
+
+                const textNode = probe.firstChild;
+                if (!textNode) {
+                    probe.remove();
+                    return text.length;
+                }
+
+                const lineCountForPrefix = end => {
+                    const range = document.createRange();
+                    range.setStart(textNode, 0);
+                    range.setEnd(textNode, end);
+                    return Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0).length;
+                };
+
+                if (lineCountForPrefix(text.length) <= 1) {
+                    probe.remove();
+                    return text.length;
+                }
+
+                let low = 1;
+                let high = text.length;
+                let best = 1;
+                while (low <= high) {
+                    const mid = Math.floor((low + high) / 2);
+                    if (lineCountForPrefix(mid) <= 1) {
+                        best = mid;
+                        low = mid + 1;
+                    } else {
+                        high = mid - 1;
+                    }
+                }
+
+                probe.remove();
+                return Math.max(1, Math.min(best, text.length));
+            }
+
+            function findFirstHanAfterStar(text) {
+                const starIndex = text.indexOf('★');
+                if (starIndex < 0) return -1;
+                for (let index = starIndex + 1; index < text.length; index += 1) {
+                    if (/\p{Script=Han}/u.test(text[index])) return index;
+                }
+                return -1;
+            }
+
+            function measureStationContinuationIndent(element, text, hanIndex) {
+                if (hanIndex <= 0 || element.clientWidth <= 0) return 0;
+
+                const probe = document.createElement('span');
+                const style = getComputedStyle(element);
+                probe.style.position = 'fixed';
+                probe.style.left = '-100000px';
+                probe.style.top = '0';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.margin = '0';
+                probe.style.padding = '0';
+                probe.style.border = '0';
+                probe.style.whiteSpace = 'pre';
+                probe.style.font = style.font;
+                probe.style.fontFamily = style.fontFamily;
+                probe.style.fontSize = style.fontSize;
+                probe.style.fontWeight = style.fontWeight;
+                probe.style.fontStyle = style.fontStyle;
+                probe.style.letterSpacing = style.letterSpacing;
+                probe.textContent = text.slice(0, hanIndex);
+                document.body.appendChild(probe);
+                const width = probe.getBoundingClientRect().width;
+                probe.remove();
+                return Math.max(0, Math.min(width, element.clientWidth * 0.8));
+            }
+
+            function applyMobileStationContinuationAlignment() {
+                cancelAnimationFrame(mobileStationAlignRaf);
                 mobileStationAlignRaf = requestAnimationFrame(() => {
                     resetMobileStationAlignment();
-
                     if (!mobileStationMedia.matches) return;
 
                     document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
-                        const text = element.dataset.stationText || '';
-                        if (!text || element.clientWidth <= 0) return;
+                        const fullText = element.dataset.stationText || '';
+                        if (!fullText) return;
 
-                        const probe = element.cloneNode(false);
-                        const style = getComputedStyle(element);
+                        // 先按原始左对齐宽度判断是否真的超过一行；单行内容完全不处理。
+                        const firstLineEnd = findFirstVisualLineEnd(element, fullText);
+                        if (firstLineEnd >= fullText.length) return;
 
-                        probe.removeAttribute('data-station-text');
-                        probe.style.position = 'fixed';
-                        probe.style.left = '-100000px';
-                        probe.style.visibility = 'hidden';
-                        probe.style.pointerEvents = 'none';
-                        probe.style.width = `${element.clientWidth}px`;
-                        probe.style.maxWidth = `${element.clientWidth}px`;
-                        probe.style.whiteSpace = 'normal';
-                        probe.style.wordBreak = 'break-all';
-                        probe.style.font = style.font;
-                        probe.style.letterSpacing = style.letterSpacing;
-                        probe.style.lineHeight = style.lineHeight;
+                        const hanIndex = findFirstHanAfterStar(fullText);
+                        if (hanIndex < 0) return;
 
-                        document.body.appendChild(probe);
+                        const indent = measureStationContinuationIndent(element, fullText, hanIndex);
+                        if (!(indent > 0)) return;
 
-                        const lines = [];
-                        let current = '';
-
-                        for (const char of text) {
-                            probe.textContent = current + char;
-
-                            if (probe.scrollHeight > parseFloat(style.lineHeight || style.fontSize) * 1.8 && current) {
-                                lines.push(current);
-                                current = char;
-                                probe.textContent = current;
-                            } else {
-                                current += char;
-                            }
-                        }
-
-                        if (current) lines.push(current);
-
-                        probe.remove();
-
-                        if (lines.length <= 1) return;
-
-                        element.innerHTML = '';
-
-                        lines.forEach((line, index) => {
-                            const row = document.createElement('div');
-                            row.textContent = line;
-
-                            if (index > 0 && line.length < getLineCapacity(element)) {
-                                row.style.textAlign = 'right';
-                            } else {
-                                row.style.textAlign = 'left';
-                            }
-
-                            element.appendChild(row);
-                        });
+                        element.style.setProperty('--station-continuation-indent', `${indent}px`);
+                        element.classList.add('station-wrap-aligned');
                     });
                 });
-            }
-
-            function getLineCapacity(element) {
-                const probe = document.createElement('span');
-                const style = getComputedStyle(element);
-
-                probe.style.position = 'fixed';
-                probe.style.visibility = 'hidden';
-                probe.style.whiteSpace = 'nowrap';
-                probe.style.font = style.font;
-                probe.textContent = '汉';
-
-                document.body.appendChild(probe);
-
-                const charWidth = probe.getBoundingClientRect().width;
-                probe.remove();
-
-                return Math.max(1, Math.floor(element.clientWidth / charWidth));
             }
 
             function renderTable() {
@@ -951,7 +2185,7 @@ Rail 未配置
                         </tr>
                     `;
                 }).join('');
-                applyMobileStationAlignment();
+                applyMobileStationContinuationAlignment();
             }
 
             function renderAll() {
@@ -2319,3 +3553,5 @@ Rail 未配置
             }
         })();
     </script>
+</body>
+</html>
