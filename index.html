@@ -815,146 +815,108 @@ Rail 未配置
                 renderStationChips(editSelectedStations, pendingEditStations, 'edit');
             }
 
+
             const mobileStationMedia = window.matchMedia('(max-width: 700px)');
             let mobileStationAlignRaf = 0;
 
             function resetMobileStationAlignment() {
                 document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
                     const fullText = element.dataset.stationText || '';
-                    if (element.textContent !== fullText || element.children.length) {
-                        element.textContent = fullText;
-                    }
+                    element.textContent = fullText;
                     element.classList.remove('station-wrap-aligned');
-                    element.style.removeProperty('--station-continuation-indent');
+                    element.style.removeProperty('--station-line-count');
                 });
             }
 
-            function findFirstVisualLineEnd(element, text) {
-                if (!text || element.clientWidth <= 0) return text.length;
-
-                const probe = element.cloneNode(false);
-                const style = getComputedStyle(element);
-                probe.removeAttribute('data-station-text');
-                probe.classList.remove('station-wrap-aligned');
-                probe.style.position = 'fixed';
-                probe.style.left = '-100000px';
-                probe.style.top = '0';
-                probe.style.visibility = 'hidden';
-                probe.style.pointerEvents = 'none';
-                probe.style.margin = '0';
-                probe.style.padding = '0';
-                probe.style.textIndent = '0';
-                probe.style.width = `${element.clientWidth}px`;
-                probe.style.maxWidth = `${element.clientWidth}px`;
-                probe.style.height = 'auto';
-                probe.style.whiteSpace = 'normal';
-                probe.style.overflowWrap = 'anywhere';
-                probe.style.wordBreak = style.wordBreak;
-                probe.style.font = style.font;
-                probe.style.fontFamily = style.fontFamily;
-                probe.style.fontSize = style.fontSize;
-                probe.style.fontWeight = style.fontWeight;
-                probe.style.fontStyle = style.fontStyle;
-                probe.style.letterSpacing = style.letterSpacing;
-                probe.style.lineHeight = style.lineHeight;
-                probe.textContent = text;
-                document.body.appendChild(probe);
-
-                const textNode = probe.firstChild;
-                if (!textNode) {
-                    probe.remove();
-                    return text.length;
-                }
-
-                const lineCountForPrefix = end => {
-                    const range = document.createRange();
-                    range.setStart(textNode, 0);
-                    range.setEnd(textNode, end);
-                    return Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0).length;
-                };
-
-                if (lineCountForPrefix(text.length) <= 1) {
-                    probe.remove();
-                    return text.length;
-                }
-
-                let low = 1;
-                let high = text.length;
-                let best = 1;
-                while (low <= high) {
-                    const mid = Math.floor((low + high) / 2);
-                    if (lineCountForPrefix(mid) <= 1) {
-                        best = mid;
-                        low = mid + 1;
-                    } else {
-                        high = mid - 1;
-                    }
-                }
-
-                probe.remove();
-                return Math.max(1, Math.min(best, text.length));
-            }
-
-            function findFirstHanAfterStar(text) {
-                const starIndex = text.indexOf('★');
-                if (starIndex < 0) return -1;
-                for (let index = starIndex + 1; index < text.length; index += 1) {
-                    if (/\p{Script=Han}/u.test(text[index])) return index;
-                }
-                return -1;
-            }
-
-            function measureStationContinuationIndent(element, text, hanIndex) {
-                if (hanIndex <= 0 || element.clientWidth <= 0) return 0;
-
-                const probe = document.createElement('span');
-                const style = getComputedStyle(element);
-                probe.style.position = 'fixed';
-                probe.style.left = '-100000px';
-                probe.style.top = '0';
-                probe.style.visibility = 'hidden';
-                probe.style.pointerEvents = 'none';
-                probe.style.margin = '0';
-                probe.style.padding = '0';
-                probe.style.border = '0';
-                probe.style.whiteSpace = 'pre';
-                probe.style.font = style.font;
-                probe.style.fontFamily = style.fontFamily;
-                probe.style.fontSize = style.fontSize;
-                probe.style.fontWeight = style.fontWeight;
-                probe.style.fontStyle = style.fontStyle;
-                probe.style.letterSpacing = style.letterSpacing;
-                probe.textContent = text.slice(0, hanIndex);
-                document.body.appendChild(probe);
-                const width = probe.getBoundingClientRect().width;
-                probe.remove();
-                return Math.max(0, Math.min(width, element.clientWidth * 0.8));
-            }
-
-            function applyMobileStationContinuationAlignment() {
+            // 手机端车站多行排版：
+            // 第一行左对齐；
+            // 后续行保持字符顺序从左到右；
+            // 若该行不足一整行，则整行靠右占位。
+            function applyMobileStationAlignment() {
                 cancelAnimationFrame(mobileStationAlignRaf);
+
                 mobileStationAlignRaf = requestAnimationFrame(() => {
                     resetMobileStationAlignment();
+
                     if (!mobileStationMedia.matches) return;
 
                     document.querySelectorAll('.train-station[data-station-text]').forEach(element => {
-                        const fullText = element.dataset.stationText || '';
-                        if (!fullText) return;
+                        const text = element.dataset.stationText || '';
+                        if (!text || element.clientWidth <= 0) return;
 
-                        // 先按原始左对齐宽度判断是否真的超过一行；单行内容完全不处理。
-                        const firstLineEnd = findFirstVisualLineEnd(element, fullText);
-                        if (firstLineEnd >= fullText.length) return;
+                        const probe = element.cloneNode(false);
+                        const style = getComputedStyle(element);
 
-                        const hanIndex = findFirstHanAfterStar(fullText);
-                        if (hanIndex < 0) return;
+                        probe.removeAttribute('data-station-text');
+                        probe.style.position = 'fixed';
+                        probe.style.left = '-100000px';
+                        probe.style.visibility = 'hidden';
+                        probe.style.pointerEvents = 'none';
+                        probe.style.width = `${element.clientWidth}px`;
+                        probe.style.maxWidth = `${element.clientWidth}px`;
+                        probe.style.whiteSpace = 'normal';
+                        probe.style.wordBreak = 'break-all';
+                        probe.style.font = style.font;
+                        probe.style.letterSpacing = style.letterSpacing;
+                        probe.style.lineHeight = style.lineHeight;
 
-                        const indent = measureStationContinuationIndent(element, fullText, hanIndex);
-                        if (!(indent > 0)) return;
+                        document.body.appendChild(probe);
 
-                        element.style.setProperty('--station-continuation-indent', `${indent}px`);
-                        element.classList.add('station-wrap-aligned');
+                        const lines = [];
+                        let current = '';
+
+                        for (const char of text) {
+                            probe.textContent = current + char;
+
+                            if (probe.scrollHeight > parseFloat(style.lineHeight || style.fontSize) * 1.8 && current) {
+                                lines.push(current);
+                                current = char;
+                                probe.textContent = current;
+                            } else {
+                                current += char;
+                            }
+                        }
+
+                        if (current) lines.push(current);
+
+                        probe.remove();
+
+                        if (lines.length <= 1) return;
+
+                        element.innerHTML = '';
+
+                        lines.forEach((line, index) => {
+                            const row = document.createElement('div');
+                            row.textContent = line;
+
+                            if (index > 0 && line.length < getLineCapacity(element)) {
+                                row.style.textAlign = 'right';
+                            } else {
+                                row.style.textAlign = 'left';
+                            }
+
+                            element.appendChild(row);
+                        });
                     });
                 });
+            }
+
+            function getLineCapacity(element) {
+                const probe = document.createElement('span');
+                const style = getComputedStyle(element);
+
+                probe.style.position = 'fixed';
+                probe.style.visibility = 'hidden';
+                probe.style.whiteSpace = 'nowrap';
+                probe.style.font = style.font;
+                probe.textContent = '汉';
+
+                document.body.appendChild(probe);
+
+                const charWidth = probe.getBoundingClientRect().width;
+                probe.remove();
+
+                return Math.max(1, Math.floor(element.clientWidth / charWidth));
             }
 
             function renderTable() {
@@ -989,7 +951,7 @@ Rail 未配置
                         </tr>
                     `;
                 }).join('');
-                applyMobileStationContinuationAlignment();
+                applyMobileStationAlignment();
             }
 
             function renderAll() {
