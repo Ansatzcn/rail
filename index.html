@@ -986,12 +986,13 @@
                 gap: 0.75rem;
             }
 
-            /* 手机端：仅当车站文字实际换行时，续行与 ★ 后第一个汉字对齐。 */
+            /* 手机端：仅当车站文字实际换行时，首行保持原位；不足整行的末行靠右，汉字按右侧逐个对齐。 */
             .train-station.station-wrap-aligned {
                 box-sizing: border-box;
-                padding-left: var(--station-continuation-indent, 0px);
-                text-indent: calc(-1 * var(--station-continuation-indent, 0px));
+                padding-left: 0;
+                text-indent: 0;
                 text-align: left;
+                text-align-last: right;
                 white-space: normal;
                 overflow-wrap: anywhere;
             }
