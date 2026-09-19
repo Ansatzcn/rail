@@ -986,9 +986,13 @@
                 gap: 0.75rem;
             }
 
-            /* 手机端：仅当车站文字实际换行时，首行保持原位；不足整行的末行靠右，汉字按右侧逐个对齐。 */
+            /* 手机端：仅当“车站★区划”实际换行时处理。
+               首行位置不变；续行末尾对准上一行实际末字，因此续行 1/2/3… 个字
+               会分别与上一行最后 1/2/3… 个汉字逐字垂直对齐。 */
             .train-station.station-wrap-aligned {
                 box-sizing: border-box;
+                width: var(--station-wrap-anchor-width, 100%);
+                max-width: 100%;
                 padding-left: 0;
                 text-indent: 0;
                 text-align: left;
@@ -2023,6 +2027,7 @@
                     }
                     element.classList.remove('station-wrap-aligned');
                     element.style.removeProperty('--station-continuation-indent');
+                    element.style.removeProperty('--station-wrap-anchor-width');
                 });
             }
 
@@ -2092,40 +2097,26 @@
                 return Math.max(1, Math.min(best, text.length));
             }
 
-            function findFirstHanAfterStar(text) {
-                const starIndex = text.indexOf('★');
-                if (starIndex < 0) return -1;
-                for (let index = starIndex + 1; index < text.length; index += 1) {
-                    if (/\p{Script=Han}/u.test(text[index])) return index;
-                }
-                return -1;
-            }
+            function measureFirstVisualLineRight(element, endIndex) {
+                if (endIndex <= 0 || element.clientWidth <= 0) return 0;
 
-            function measureStationContinuationIndent(element, text, hanIndex) {
-                if (hanIndex <= 0 || element.clientWidth <= 0) return 0;
+                const textNode = element.firstChild;
+                if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return 0;
 
-                const probe = document.createElement('span');
-                const style = getComputedStyle(element);
-                probe.style.position = 'fixed';
-                probe.style.left = '-100000px';
-                probe.style.top = '0';
-                probe.style.visibility = 'hidden';
-                probe.style.pointerEvents = 'none';
-                probe.style.margin = '0';
-                probe.style.padding = '0';
-                probe.style.border = '0';
-                probe.style.whiteSpace = 'pre';
-                probe.style.font = style.font;
-                probe.style.fontFamily = style.fontFamily;
-                probe.style.fontSize = style.fontSize;
-                probe.style.fontWeight = style.fontWeight;
-                probe.style.fontStyle = style.fontStyle;
-                probe.style.letterSpacing = style.letterSpacing;
-                probe.textContent = text.slice(0, hanIndex);
-                document.body.appendChild(probe);
-                const width = probe.getBoundingClientRect().width;
-                probe.remove();
-                return Math.max(0, Math.min(width, element.clientWidth * 0.8));
+                const range = document.createRange();
+                range.setStart(textNode, 0);
+                range.setEnd(textNode, Math.min(endIndex, textNode.length));
+
+                const rects = Array.from(range.getClientRects())
+                    .filter(rect => rect.width > 0 || rect.height > 0);
+                if (!rects.length) return 0;
+
+                const firstTop = rects[0].top;
+                const lineRects = rects.filter(rect => Math.abs(rect.top - firstTop) < 1);
+                const lineRight = Math.max(...lineRects.map(rect => rect.right));
+                const elementLeft = element.getBoundingClientRect().left;
+
+                return Math.max(0, Math.min(lineRight - elementLeft, element.clientWidth));
             }
 
             function applyMobileStationContinuationAlignment() {
@@ -2138,17 +2129,20 @@
                         const fullText = element.dataset.stationText || '';
                         if (!fullText) return;
 
-                        // 先按原始左对齐宽度判断是否真的超过一行；单行内容完全不处理。
+                        // 仅处理“车站★区划”格式；单行内容完全不处理。
+                        if (!fullText.includes('★')) return;
+
+                        // 先按原始左对齐布局确定第一视觉行的实际结束位置。
                         const firstLineEnd = findFirstVisualLineEnd(element, fullText);
                         if (firstLineEnd >= fullText.length) return;
 
-                        const hanIndex = findFirstHanAfterStar(fullText);
-                        if (hanIndex < 0) return;
+                        // 对齐基准不是单元格右边缘，而是上一行最后一个实际字符的右边缘。
+                        // 将文本盒宽度收至该位置后，只把末行右对齐：
+                        // 末行 1 个字对准上一行末字，2 个字对准末两字，以此类推。
+                        const anchorWidth = measureFirstVisualLineRight(element, firstLineEnd);
+                        if (!(anchorWidth > 0)) return;
 
-                        const indent = measureStationContinuationIndent(element, fullText, hanIndex);
-                        if (!(indent > 0)) return;
-
-                        element.style.setProperty('--station-continuation-indent', `${indent}px`);
+                        element.style.setProperty('--station-wrap-anchor-width', `${anchorWidth}px`);
                         element.classList.add('station-wrap-aligned');
                     });
                 });
