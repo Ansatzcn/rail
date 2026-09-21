@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-build" content="2026-09-15-mobile-station-hanging-indent-v1">
+    <meta name="app-build" content="2026-09-22-html-backup-v1">
     <title>Rail</title>
     <style>
         * {
@@ -1206,7 +1206,7 @@
                 <button type="button" class="btn" id="configBtn">配置</button>
                 <button type="button" class="btn" id="exportBtn">导出</button>
                 <button type="button" class="btn" id="importBtn">导入</button>
-                <input type="file" id="fileInput" accept=".json,application/json" hidden>
+                <input type="file" id="fileInput" accept=".html,.htm,text/html,.json,application/json" hidden>
             </div>
             <span class="last-sync" id="lastSyncTime">未同步</span>
         </section>
@@ -1403,6 +1403,8 @@
             const TOKEN_MEMORY_KEY = `${NAMESPACE}:token_session`;
             const SYNC_META_KEY = `${NAMESPACE}:sync_meta_v1`;
             const MAX_SYNC_BYTES = 750 * 1024;
+            const MAX_BACKUP_FILE_BYTES = 10 * 1024 * 1024;
+            const HTML_BACKUP_FORMAT = 'rail-html-backup-v1';
             const AUTO_SYNC_DELAY = 700;
 
             const persistentStorage = { name: 'rail-idb', map: new Map() };
@@ -2558,10 +2560,8 @@
                 showToast(`已从候选项删除“${station}”`, 'success');
             }
 
-            function downloadJson(data, filename) {
-                const blob = new Blob([JSON.stringify(data, null, 2)], {
-                    type: 'application/json;charset=utf-8'
-                });
+            function downloadText(text, filename, mimeType) {
+                const blob = new Blob([text], { type: `${mimeType};charset=utf-8` });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
@@ -2572,30 +2572,128 @@
                 URL.revokeObjectURL(url);
             }
 
-            function exportData() {
-                if (state.entries.length === 0 && state.stations.length === 0) {
-                    alert('暂无可导出的数据。');
-                    return;
+            function getWebsiteName() {
+                const name = cleanText(document.title)
+                    .toLocaleLowerCase('zh-CN')
+                    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+                    .replace(/\s+/g, '');
+                return name || 'rail';
+            }
+
+            function getUnixTimestamp10() {
+                return String(Math.floor(Date.now() / 1000)).padStart(10, '0').slice(-10);
+            }
+
+            function makeHtmlBackupEnvelope(source = state) {
+                return {
+                    format: HTML_BACKUP_FORMAT,
+                    encoding: 'base64',
+                    site: getWebsiteName(),
+                    exportedAt: Math.floor(Date.now() / 1000),
+                    payload: utf8ToBase64(JSON.stringify(makeSerializableState(source)))
+                };
+            }
+
+            function decodeHtmlBackupElement(element) {
+                if (!element) throw new Error('未找到 HTML 备份数据');
+
+                let envelope;
+                try {
+                    envelope = JSON.parse(element.textContent || '');
+                } catch (error) {
+                    throw new Error('HTML 备份数据格式损坏');
                 }
 
-                downloadJson(
-                    makeSerializableState(state),
-                    `rail_backup_${new Date().toISOString().slice(0, 10)}.json`
-                );
-                showToast('导出成功', 'success');
+                if (
+                    !envelope ||
+                    envelope.format !== HTML_BACKUP_FORMAT ||
+                    envelope.encoding !== 'base64' ||
+                    typeof envelope.payload !== 'string'
+                ) {
+                    throw new Error('不是受支持的 Rail HTML 备份');
+                }
+
+                try {
+                    return normalizePayload(JSON.parse(base64ToUtf8(envelope.payload)));
+                } catch (error) {
+                    throw new Error(`HTML 备份数据解析失败：${error.message}`);
+                }
+            }
+
+            function createHtmlBackup(source = state) {
+                const clone = document.documentElement.cloneNode(true);
+                clone.querySelector('#railBackupData')?.remove();
+
+                const backupScript = document.createElement('script');
+                backupScript.type = 'application/json';
+                backupScript.id = 'railBackupData';
+                backupScript.setAttribute('data-rail-backup', HTML_BACKUP_FORMAT);
+                backupScript.textContent = JSON.stringify(makeHtmlBackupEnvelope(source))
+                    .replace(/</g, '\\u003c');
+
+                const head = clone.querySelector('head');
+                const body = clone.querySelector('body');
+                if (head) head.appendChild(backupScript);
+                else if (body) body.insertBefore(backupScript, body.firstChild);
+                else clone.appendChild(backupScript);
+
+                clone.querySelector('#editModal')?.classList.add('hidden');
+                clone.querySelector('#configModal')?.classList.add('hidden');
+                clone.querySelector('#toast')?.classList.add('hidden');
+                clone.querySelector('#stationDropdown')?.classList.add('hidden');
+                clone.querySelector('#editStationDropdown')?.classList.add('hidden');
+
+                const clonedTokenInput = clone.querySelector('#cfgToken');
+                if (clonedTokenInput) clonedTokenInput.removeAttribute('value');
+
+                return `<!DOCTYPE html>\n${clone.outerHTML}`;
+            }
+
+            function parseImportedBackup(text, file) {
+                const trimmed = String(text || '').trimStart();
+                const isHtml = /\.html?$/i.test(file?.name || '') || /^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed);
+
+                if (isHtml) {
+                    const importedDocument = new DOMParser().parseFromString(text, 'text/html');
+                    const backupElement = importedDocument.getElementById('railBackupData');
+                    return decodeHtmlBackupElement(backupElement);
+                }
+
+                return normalizePayload(JSON.parse(text));
+            }
+
+            function loadEmbeddedBackup() {
+                const backupElement = document.getElementById('railBackupData');
+                if (!backupElement) return false;
+
+                try {
+                    state = decodeHtmlBackupElement(backupElement);
+                    saveStateToStorage();
+                    hadStoredState = true;
+                    renderAll();
+                    return true;
+                } catch (error) {
+                    console.warn('内嵌 HTML 备份恢复失败:', error);
+                    return false;
+                }
+            }
+
+            function exportData() {
+                const filename = `${getWebsiteName()}${getUnixTimestamp10()}.html`;
+                downloadText(createHtmlBackup(state), filename, 'text/html');
+                showToast(`已导出 ${filename}`, 'success');
             }
 
             function importData(file) {
-                if (!file || file.size > MAX_SYNC_BYTES) {
-                    alert('请选择不超过 750 KB 的 JSON 文件。');
+                if (!file || file.size > MAX_BACKUP_FILE_BYTES) {
+                    alert('请选择不超过 10 MB 的 HTML 或 JSON 备份文件。');
                     return;
                 }
 
                 const reader = new FileReader();
                 reader.onload = event => {
                     try {
-                        const imported = normalizePayload(JSON.parse(event.target.result));
-                        assertSyncSize(imported);
+                        const imported = parseImportedBackup(event.target.result, file);
 
                         if (
                             (state.entries.length > 0 || state.stations.length > 0) &&
@@ -3536,6 +3634,7 @@
             loadConfig();
             loadSyncMeta();
             loadStateFromStorage();
+            loadEmbeddedBackup();
             await autoImportRailData();
             updateLastSyncDisplay();
             updateBackToTopVisibility();
