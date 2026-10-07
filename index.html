@@ -1402,10 +1402,14 @@
             const TOKEN_PROFILES_KEY = `${NAMESPACE}:token_profiles_v1`;
             const TOKEN_MEMORY_KEY = `${NAMESPACE}:token_session`;
             const SYNC_META_KEY = `${NAMESPACE}:sync_meta_v1`;
+            const SYNC_BASE_KEY = `${NAMESPACE}:sync_base_v2`;
             const MAX_SYNC_BYTES = 750 * 1024;
             const MAX_BACKUP_FILE_BYTES = 10 * 1024 * 1024;
             const HTML_BACKUP_FORMAT = 'rail-html-backup-v1';
             const AUTO_SYNC_DELAY = 700;
+            const PASSIVE_SYNC_DELAY = 700;
+            const PASSIVE_SYNC_MIN_INTERVAL = 3000;
+            const SYNC_RETRY_LIMIT = 3;
 
             const persistentStorage = { name: 'rail-idb', map: new Map() };
             const sessionMemoryStorage = { map: new Map() };
@@ -1477,6 +1481,8 @@
             };
 
             let syncMeta = createEmptySyncMeta();
+            let syncBase = null;
+            let syncBaseTarget = '';
             let editingIndex = null;
             let pendingAddStations = [];
             let pendingEditStations = [];
@@ -1485,7 +1491,12 @@
             const stationKeyboardIndex = { add: -1, edit: -1 };
             let isSyncing = false;
             let syncQueued = false;
+            let queuedSyncShowMessage = false;
+            let queuedSyncInteractive = false;
             let autoSyncTimer = null;
+            let passiveSyncTimer = null;
+            let lastPassiveSyncAt = 0;
+            let localMutationVersion = 0;
             let toastTimer = null;
             let hadStoredState = false;
 
@@ -3024,7 +3035,10 @@
 
                 if (previousTarget !== getSyncTarget()) {
                     syncMeta = createEmptySyncMeta(getSyncTarget());
+                    syncBase = null;
+                    syncBaseTarget = '';
                     saveSyncMeta();
+                    saveSyncBase();
                 }
 
                 closeConfigModal();
@@ -3037,7 +3051,8 @@
                     target,
                     remoteSha: null,
                     lastFingerprint: null,
-                    lastSyncAt: null
+                    lastSyncAt: null,
+                    dirty: false
                 };
             }
 
@@ -3056,7 +3071,8 @@
                         lastFingerprint: typeof parsed.lastFingerprint === 'string'
                             ? parsed.lastFingerprint
                             : null,
-                        lastSyncAt: typeof parsed.lastSyncAt === 'string' ? parsed.lastSyncAt : null
+                        lastSyncAt: typeof parsed.lastSyncAt === 'string' ? parsed.lastSyncAt : null,
+                        dirty: Boolean(parsed.dirty)
                     };
                 } catch (error) {
                     syncMeta = createEmptySyncMeta();
@@ -3068,25 +3084,95 @@
                 updateLastSyncDisplay();
             }
 
+            function loadSyncBase() {
+                const stored = safeGet(persistentStorage, SYNC_BASE_KEY);
+                syncBase = null;
+                syncBaseTarget = '';
+                if (!stored) return;
+
+                try {
+                    const parsed = JSON.parse(stored);
+                    if (!parsed || typeof parsed.target !== 'string' || !parsed.state) return;
+                    syncBase = normalizePayload(parsed.state);
+                    syncBaseTarget = parsed.target;
+                } catch (error) {
+                    console.warn('同步基线读取失败:', error);
+                    syncBase = null;
+                    syncBaseTarget = '';
+                }
+            }
+
+            function saveSyncBase(snapshot = syncBase) {
+                if (!snapshot || !syncBaseTarget) {
+                    safeRemove(persistentStorage, SYNC_BASE_KEY);
+                    return;
+                }
+
+                safeSet(
+                    persistentStorage,
+                    SYNC_BASE_KEY,
+                    JSON.stringify({
+                        target: syncBaseTarget,
+                        state: makeSerializableState(snapshot)
+                    })
+                );
+            }
+
             function ensureSyncTarget() {
                 const target = getSyncTarget();
                 if (syncMeta.target !== target) {
                     syncMeta = createEmptySyncMeta(target);
+                    syncBase = null;
+                    syncBaseTarget = '';
                     saveSyncMeta();
+                    saveSyncBase();
+                    return;
+                }
+
+                if (syncBaseTarget && syncBaseTarget !== target) {
+                    syncBase = null;
+                    syncBaseTarget = '';
+                    saveSyncBase();
                 }
             }
 
+            function getUsableSyncBase() {
+                if (
+                    !syncBase ||
+                    syncBaseTarget !== getSyncTarget() ||
+                    typeof syncMeta.lastFingerprint !== 'string'
+                ) {
+                    return null;
+                }
+
+                return getFingerprint(syncBase) === syncMeta.lastFingerprint
+                    ? normalizePayload(syncBase)
+                    : null;
+            }
+
             function recordSynced(snapshot, sha) {
+                const normalized = normalizePayload(snapshot);
+                const fingerprint = getFingerprint(normalized);
+                syncBase = normalized;
+                syncBaseTarget = getSyncTarget();
+                saveSyncBase(normalized);
+
                 syncMeta = {
                     target: getSyncTarget(),
                     remoteSha: sha || null,
-                    lastFingerprint: getFingerprint(snapshot),
-                    lastSyncAt: new Date().toISOString()
+                    lastFingerprint: fingerprint,
+                    lastSyncAt: new Date().toISOString(),
+                    dirty: getFingerprint(state) !== fingerprint
                 };
                 saveSyncMeta();
             }
 
             function updateLastSyncDisplay() {
+                if (syncMeta.dirty && syncMeta.target === getSyncTarget()) {
+                    lastSyncTime.textContent = '有未同步修改';
+                    return;
+                }
+
                 if (!syncMeta.lastSyncAt || syncMeta.target !== getSyncTarget()) {
                     lastSyncTime.textContent = '未同步';
                     return;
@@ -3218,107 +3304,624 @@
                 return result?.content?.sha || null;
             }
 
-            async function adoptRemote(remote, showMessage) {
-                state = normalizePayload(remote.state);
+            function delay(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            function isWriteConflictError(error) {
+                const status = Number(error?.status);
+                const message = String(error?.message || '').toLocaleLowerCase('en-US');
+                return status === 409 ||
+                    (status === 422 && /(sha|conflict|already exists|does not match)/.test(message));
+            }
+
+            function isTransientSyncError(error) {
+                const status = Number(error?.status);
+                return error instanceof TypeError ||
+                    error?.name === 'NetworkError' ||
+                    error?.name === 'AbortError' ||
+                    status === 408 ||
+                    status === 429 ||
+                    status >= 500;
+            }
+
+            async function verifyRemoteEquals(snapshot) {
+                try {
+                    const remote = await readRemoteState();
+                    if (
+                        remote.exists &&
+                        getFingerprint(remote.state) === getFingerprint(snapshot)
+                    ) {
+                        return { matched: true, sha: remote.sha };
+                    }
+                } catch (error) {
+                    console.warn('写入结果复核失败:', error);
+                }
+                return { matched: false, sha: null };
+            }
+
+            async function writeRemoteSafely(snapshot, sha = null) {
+                try {
+                    return await writeRemoteState(snapshot, sha);
+                } catch (error) {
+                    if (isWriteConflictError(error)) throw error;
+                    if (isTransientSyncError(error)) {
+                        const verification = await verifyRemoteEquals(snapshot);
+                        if (verification.matched) return verification.sha;
+                    }
+                    throw error;
+                }
+            }
+
+            function normalizedEntrySignature(entry) {
+                const normalized = normalizeEntry(entry);
+                if (!normalized) return '';
+                return JSON.stringify({
+                    train: normalized.train,
+                    interval: normalized.interval,
+                    stations: sortStationOptions(normalized.stations)
+                });
+            }
+
+            function entriesEqual(a, b) {
+                if (!a && !b) return true;
+                if (!a || !b) return false;
+                return normalizedEntrySignature(a) === normalizedEntrySignature(b);
+            }
+
+            function makeStationMap(values) {
+                const map = new Map();
+                for (const station of uniqueStations(values || [])) {
+                    map.set(stationKey(station), station);
+                }
+                return map;
+            }
+
+            function mergeStationSet(baseValues, localValues, remoteValues) {
+                const base = makeStationMap(baseValues);
+                const local = makeStationMap(localValues);
+                const remote = makeStationMap(remoteValues);
+                const keys = new Set([...base.keys(), ...local.keys(), ...remote.keys()]);
+                const merged = [];
+
+                for (const key of keys) {
+                    const baseHas = base.has(key);
+                    const localHas = local.has(key);
+                    const remoteHas = remote.has(key);
+                    let include;
+
+                    if (localHas === remoteHas) include = localHas;
+                    else if (localHas === baseHas) include = remoteHas;
+                    else if (remoteHas === baseHas) include = localHas;
+                    else include = localHas || remoteHas;
+
+                    if (!include) continue;
+
+                    const baseValue = base.get(key) || '';
+                    const localValue = local.get(key) || '';
+                    const remoteValue = remote.get(key) || '';
+                    let chosen = localValue || remoteValue || baseValue;
+
+                    if (localValue && remoteValue && localValue !== remoteValue) {
+                        if (localValue === baseValue) chosen = remoteValue;
+                        else if (remoteValue === baseValue) chosen = localValue;
+                    }
+
+                    merged.push(chosen);
+                }
+
+                return sortStationOptions(merged);
+            }
+
+            function mergeScalarText(baseValue, localValue, remoteValue, preference, conflicts, info) {
+                const base = cleanText(baseValue);
+                const local = cleanText(localValue);
+                const remote = cleanText(remoteValue);
+
+                if (local === remote) return local;
+                if (local === base) return remote;
+                if (remote === base) return local;
+
+                if (!base && !local && remote) return remote;
+                if (!base && local && !remote) return local;
+
+                conflicts.push({ ...info, local, remote });
+                return preference === 'remote' ? remote : local;
+            }
+
+            function mergeEntryFields(baseEntry, localEntry, remoteEntry, preference, conflicts) {
+                const base = baseEntry ? normalizeEntry(baseEntry) : null;
+                const local = normalizeEntry(localEntry);
+                const remote = normalizeEntry(remoteEntry);
+                if (!local) return remote;
+                if (!remote) return local;
+
+                const trainBase = base?.train || '';
+                let train;
+                if (local.train === remote.train) train = local.train;
+                else if (local.train === trainBase) train = remote.train;
+                else if (remote.train === trainBase) train = local.train;
+                else train = preference === 'remote' ? remote.train : local.train;
+
+                const interval = mergeScalarText(
+                    base?.interval || '',
+                    local.interval || '',
+                    remote.interval || '',
+                    preference,
+                    conflicts,
+                    { train: train || local.train || remote.train, field: 'interval' }
+                );
+
+                const stations = mergeStationSet(
+                    base?.stations || [],
+                    local.stations || [],
+                    remote.stations || []
+                );
+
+                return normalizeEntry({ train, interval, stations });
+            }
+
+            function makeEntryMap(entries) {
+                const map = new Map();
+                for (const entry of normalizePayload({ entries, stations: [] }).entries) {
+                    map.set(trainKey(entry.train), entry);
+                }
+                return map;
+            }
+
+            function mergeRailStates(baseState, localState, remoteState, preference = null) {
+                const base = normalizePayload(baseState);
+                const local = normalizePayload(localState);
+                const remote = normalizePayload(remoteState);
+                const baseEntries = makeEntryMap(base.entries);
+                const localEntries = makeEntryMap(local.entries);
+                const remoteEntries = makeEntryMap(remote.entries);
+                const keys = new Set([
+                    ...baseEntries.keys(),
+                    ...localEntries.keys(),
+                    ...remoteEntries.keys()
+                ]);
+                const conflicts = [];
+                const mergedEntries = [];
+
+                for (const key of keys) {
+                    const baseEntry = baseEntries.get(key) || null;
+                    const localEntry = localEntries.get(key) || null;
+                    const remoteEntry = remoteEntries.get(key) || null;
+                    let chosen = null;
+
+                    if (entriesEqual(localEntry, remoteEntry)) {
+                        chosen = localEntry || remoteEntry;
+                    } else if (entriesEqual(localEntry, baseEntry)) {
+                        chosen = remoteEntry;
+                    } else if (entriesEqual(remoteEntry, baseEntry)) {
+                        chosen = localEntry;
+                    } else if (!baseEntry) {
+                        if (localEntry && remoteEntry) {
+                            chosen = mergeEntryFields(
+                                null,
+                                localEntry,
+                                remoteEntry,
+                                preference,
+                                conflicts
+                            );
+                        } else {
+                            chosen = localEntry || remoteEntry;
+                        }
+                    } else if (!localEntry && !remoteEntry) {
+                        chosen = null;
+                    } else if (!localEntry) {
+                        conflicts.push({
+                            train: baseEntry.train,
+                            field: '__delete__',
+                            local: '已删除',
+                            remote: remoteEntry?.train || '已删除'
+                        });
+                        chosen = preference === 'remote' ? remoteEntry : null;
+                    } else if (!remoteEntry) {
+                        conflicts.push({
+                            train: baseEntry.train,
+                            field: '__delete__',
+                            local: localEntry?.train || '已删除',
+                            remote: '已删除'
+                        });
+                        chosen = preference === 'remote' ? null : localEntry;
+                    } else {
+                        chosen = mergeEntryFields(
+                            baseEntry,
+                            localEntry,
+                            remoteEntry,
+                            preference,
+                            conflicts
+                        );
+                    }
+
+                    if (chosen) mergedEntries.push(chosen);
+                }
+
+                const mergedStations = mergeStationSet(
+                    base.stations,
+                    local.stations,
+                    remote.stations
+                );
+
+                const mergedState = normalizePayload({
+                    entries: mergedEntries,
+                    stations: mergedStations
+                });
+                sortEntries(mergedState.entries);
+
+                return { state: mergedState, conflicts };
+            }
+
+            function formatConflictSummary(conflicts) {
+                const trains = new Set(conflicts.map(item => item.train).filter(Boolean));
+                return `${conflicts.length} 处 / ${trains.size || conflicts.length} 个车次`;
+            }
+
+            function finalizeSyncedState(
+                syncedSnapshot,
+                sha,
+                localAtStart,
+                mutationAtStart,
+                { applySynced = true } = {}
+            ) {
+                const normalizedSynced = normalizePayload(syncedSnapshot);
+
+                if (localMutationVersion === mutationAtStart) {
+                    if (applySynced) {
+                        state = normalizedSynced;
+                        renderAll();
+                    }
+                    recordSynced(normalizedSynced, sha);
+                    return;
+                }
+
+                const currentLocal = normalizePayload(state);
+                const rebased = mergeRailStates(
+                    localAtStart,
+                    currentLocal,
+                    normalizedSynced,
+                    'local'
+                ).state;
+
+                state = rebased;
                 renderAll();
-                recordSynced(state, remote.sha);
-                setCloudStatus('online', '已连接');
+                recordSynced(normalizedSynced, sha);
+                syncMeta.dirty = true;
+                saveSyncMeta();
+                syncQueued = true;
+                setCloudStatus('offline', '待同步');
+            }
+
+            function finishSuccessfulSyncStatus() {
+                if (syncMeta.dirty) {
+                    setCloudStatus('offline', '待同步');
+                } else {
+                    setCloudStatus('online', '已连接');
+                }
+            }
+
+            async function adoptRemote(remote, showMessage, localAtStart, mutationAtStart) {
+                finalizeSyncedState(
+                    remote.state,
+                    remote.sha,
+                    localAtStart,
+                    mutationAtStart,
+                    { applySynced: true }
+                );
+                finishSuccessfulSyncStatus();
                 if (showMessage) {
                     showToast(`已从云端更新 ${state.entries.length} 个条目`, 'success');
                 }
-                return { ok: true, conflict: false };
+                return {
+                    ok: true,
+                    conflict: false,
+                    syncedFingerprint: getFingerprint(remote.state)
+                };
             }
 
             async function performSync({ showMessage, interactive }) {
                 ensureSyncTarget();
 
-                const localSnapshot = normalizePayload(state);
-                const localFingerprint = getFingerprint(localSnapshot);
-                const baseline = syncMeta.lastFingerprint;
-                const hasBaseline = typeof baseline === 'string';
-                const remote = await readRemoteState();
+                const localAtStart = normalizePayload(state);
+                const localFingerprint = getFingerprint(localAtStart);
+                const mutationAtStart = localMutationVersion;
+                const baselineFingerprint = syncMeta.lastFingerprint;
+                const hasFingerprintBaseline = typeof baselineFingerprint === 'string';
+                const fullBase = getUsableSyncBase();
+                let conflictPreference = null;
 
-                if (!remote.exists) {
-                    if (hasBaseline && !interactive) {
-                        setCloudStatus('offline', '云端文件已删除');
-                        showToast('云端文件已删除，请点击“同步”确认是否重新创建', 'error');
+                for (let attempt = 0; attempt < SYNC_RETRY_LIMIT; attempt += 1) {
+                    const remote = await readRemoteState();
+
+                    if (!remote.exists) {
+                        if (hasFingerprintBaseline && !interactive) {
+                            setCloudStatus('offline', '云端文件已删除');
+                            showToast('云端文件已删除，请点击“同步”确认是否重新创建', 'error');
+                            return { ok: false, conflict: true };
+                        }
+
+                        if (
+                            hasFingerprintBaseline &&
+                            interactive &&
+                            !confirm('云端数据文件已删除。是否用当前本地数据重新创建？')
+                        ) {
+                            return { ok: false, conflict: true };
+                        }
+
+                        try {
+                            const sha = await writeRemoteSafely(localAtStart);
+                            finalizeSyncedState(
+                                localAtStart,
+                                sha,
+                                localAtStart,
+                                mutationAtStart,
+                                { applySynced: false }
+                            );
+                            finishSuccessfulSyncStatus();
+                            if (showMessage) showToast('已创建云端数据文件', 'success');
+                            return {
+                                ok: true,
+                                conflict: false,
+                                syncedFingerprint: localFingerprint
+                            };
+                        } catch (error) {
+                            if (isWriteConflictError(error) && attempt < SYNC_RETRY_LIMIT - 1) {
+                                await delay(180 + attempt * 120);
+                                continue;
+                            }
+                            throw error;
+                        }
+                    }
+
+                    const remoteFingerprint = getFingerprint(remote.state);
+
+                    if (localFingerprint === remoteFingerprint) {
+                        finalizeSyncedState(
+                            remote.state,
+                            remote.sha,
+                            localAtStart,
+                            mutationAtStart,
+                            { applySynced: true }
+                        );
+                        finishSuccessfulSyncStatus();
+                        if (showMessage) showToast('本地与云端已一致', 'success');
+                        return {
+                            ok: true,
+                            conflict: false,
+                            syncedFingerprint: remoteFingerprint
+                        };
+                    }
+
+                    const localChanged = !hasFingerprintBaseline ||
+                        localFingerprint !== baselineFingerprint;
+                    const remoteChanged = !hasFingerprintBaseline ||
+                        remoteFingerprint !== baselineFingerprint;
+
+                    if (hasFingerprintBaseline && localChanged && !remoteChanged) {
+                        try {
+                            const sha = await writeRemoteSafely(localAtStart, remote.sha);
+                            finalizeSyncedState(
+                                localAtStart,
+                                sha,
+                                localAtStart,
+                                mutationAtStart,
+                                { applySynced: false }
+                            );
+                            finishSuccessfulSyncStatus();
+                            if (showMessage) showToast('本地数据已上传', 'success');
+                            return {
+                                ok: true,
+                                conflict: false,
+                                syncedFingerprint: localFingerprint
+                            };
+                        } catch (error) {
+                            if (isWriteConflictError(error) && attempt < SYNC_RETRY_LIMIT - 1) {
+                                await delay(180 + attempt * 120);
+                                continue;
+                            }
+                            throw error;
+                        }
+                    }
+
+                    if (hasFingerprintBaseline && !localChanged && remoteChanged) {
+                        return adoptRemote(
+                            remote,
+                            showMessage,
+                            localAtStart,
+                            mutationAtStart
+                        );
+                    }
+
+                    if (
+                        !hasFingerprintBaseline &&
+                        !hadStoredState &&
+                        localAtStart.entries.length === 0 &&
+                        localAtStart.stations.length === 0
+                    ) {
+                        return adoptRemote(
+                            remote,
+                            showMessage,
+                            localAtStart,
+                            mutationAtStart
+                        );
+                    }
+
+                    if (fullBase) {
+                        let mergedResult = mergeRailStates(
+                            fullBase,
+                            localAtStart,
+                            remote.state,
+                            conflictPreference
+                        );
+
+                        if (mergedResult.conflicts.length > 0 && !conflictPreference) {
+                            setCloudStatus('offline', '存在冲突');
+
+                            if (!interactive) {
+                                showToast(
+                                    `检测到跨设备冲突：${formatConflictSummary(mergedResult.conflicts)}。请点击“同步”处理。`,
+                                    'error'
+                                );
+                                return { ok: false, conflict: true };
+                            }
+
+                            const preferLocal = confirm(
+                                `检测到跨设备真正冲突：${formatConflictSummary(mergedResult.conflicts)}。\n\n` +
+                                '确定：冲突项优先采用本机值；未冲突的车次、区划和车站修改仍自动合并。\n' +
+                                '取消：继续选择是否让冲突项优先采用云端值。'
+                            );
+
+                            if (preferLocal) {
+                                conflictPreference = 'local';
+                            } else {
+                                const preferRemote = confirm(
+                                    '是否让冲突项优先采用云端值？未冲突修改仍会自动合并。'
+                                );
+                                if (!preferRemote) {
+                                    showToast('已取消同步，数据未被覆盖', 'info');
+                                    return { ok: false, conflict: true };
+                                }
+                                conflictPreference = 'remote';
+                            }
+
+                            mergedResult = mergeRailStates(
+                                fullBase,
+                                localAtStart,
+                                remote.state,
+                                conflictPreference
+                            );
+                        }
+
+                        const mergedState = mergedResult.state;
+                        const mergedFingerprint = getFingerprint(mergedState);
+
+                        if (mergedFingerprint === remoteFingerprint) {
+                            finalizeSyncedState(
+                                mergedState,
+                                remote.sha,
+                                localAtStart,
+                                mutationAtStart,
+                                { applySynced: true }
+                            );
+                            finishSuccessfulSyncStatus();
+                            if (showMessage) {
+                                showToast(
+                                    mergedResult.conflicts.length
+                                        ? '冲突项已按选择处理，其余修改已自动合并'
+                                        : '已合并并采用云端最新版',
+                                    'success'
+                                );
+                            }
+                            return {
+                                ok: true,
+                                conflict: false,
+                                syncedFingerprint: mergedFingerprint
+                            };
+                        }
+
+                        try {
+                            const sha = await writeRemoteSafely(mergedState, remote.sha);
+                            finalizeSyncedState(
+                                mergedState,
+                                sha,
+                                localAtStart,
+                                mutationAtStart,
+                                { applySynced: true }
+                            );
+                            finishSuccessfulSyncStatus();
+                            if (showMessage) {
+                                showToast(
+                                    mergedResult.conflicts.length
+                                        ? '冲突项已按选择处理，其余修改已自动合并'
+                                        : '两台设备的修改已自动合并并同步',
+                                    'success'
+                                );
+                            }
+                            return {
+                                ok: true,
+                                conflict: false,
+                                syncedFingerprint: mergedFingerprint
+                            };
+                        } catch (error) {
+                            if (isWriteConflictError(error) && attempt < SYNC_RETRY_LIMIT - 1) {
+                                await delay(180 + attempt * 120);
+                                continue;
+                            }
+                            throw error;
+                        }
+                    }
+
+                    setCloudStatus('offline', '存在冲突');
+
+                    if (!interactive) {
+                        showToast(
+                            '本地和云端均有修改，但当前设备尚无完整同步基线；请点击“同步”选择版本。',
+                            'error'
+                        );
                         return { ok: false, conflict: true };
                     }
 
-                    if (hasBaseline && interactive) {
-                        const recreate = confirm('云端数据文件已删除。是否用当前本地数据重新创建？');
-                        if (!recreate) return { ok: false, conflict: true };
+                    const useLocal = confirm(
+                        '检测到本地和云端均有修改，但这是升级后的首次冲突同步，尚无完整三方基线。\n\n' +
+                        '确定：本次用本地数据覆盖云端，并建立新基线。\n' +
+                        '取消：继续选择是否采用云端数据。'
+                    );
+
+                    if (useLocal) {
+                        try {
+                            const sha = await writeRemoteSafely(localAtStart, remote.sha);
+                            finalizeSyncedState(
+                                localAtStart,
+                                sha,
+                                localAtStart,
+                                mutationAtStart,
+                                { applySynced: false }
+                            );
+                            finishSuccessfulSyncStatus();
+                            showToast('已用本地数据建立新的同步基线', 'success');
+                            return {
+                                ok: true,
+                                conflict: false,
+                                syncedFingerprint: localFingerprint
+                            };
+                        } catch (error) {
+                            if (isWriteConflictError(error) && attempt < SYNC_RETRY_LIMIT - 1) {
+                                await delay(180 + attempt * 120);
+                                continue;
+                            }
+                            throw error;
+                        }
                     }
 
-                    const sha = await writeRemoteState(localSnapshot);
-                    recordSynced(localSnapshot, sha);
-                    setCloudStatus('online', '已连接');
-                    if (showMessage) showToast('已创建云端数据文件', 'success');
-                    return { ok: true, conflict: false, uploadedFingerprint: localFingerprint };
-                }
+                    const useRemote = confirm('是否采用云端数据并建立新的同步基线？');
+                    if (useRemote) {
+                        return adoptRemote(
+                            remote,
+                            true,
+                            localAtStart,
+                            mutationAtStart
+                        );
+                    }
 
-                const remoteFingerprint = getFingerprint(remote.state);
-
-                if (localFingerprint === remoteFingerprint) {
-                    recordSynced(localSnapshot, remote.sha);
-                    setCloudStatus('online', '已连接');
-                    if (showMessage) showToast('本地与云端已一致', 'success');
-                    return { ok: true, conflict: false };
-                }
-
-                const localChanged = !hasBaseline || localFingerprint !== baseline;
-                const remoteChanged = !hasBaseline || remoteFingerprint !== baseline;
-
-                if (hasBaseline && localChanged && !remoteChanged) {
-                    const sha = await writeRemoteState(localSnapshot, remote.sha);
-                    recordSynced(localSnapshot, sha);
-                    setCloudStatus('online', '已连接');
-                    if (showMessage) showToast('本地数据已上传', 'success');
-                    return { ok: true, conflict: false, uploadedFingerprint: localFingerprint };
-                }
-
-                if (hasBaseline && !localChanged && remoteChanged) {
-                    return adoptRemote(remote, showMessage);
-                }
-
-                if (!hasBaseline && !hadStoredState && localSnapshot.entries.length === 0) {
-                    return adoptRemote(remote, showMessage);
-                }
-
-                setCloudStatus('offline', '存在冲突');
-
-                if (!interactive) {
-                    showToast('本地和云端均有修改，请点击“同步”选择保留版本', 'error');
+                    showToast('已取消同步，数据未被覆盖', 'info');
                     return { ok: false, conflict: true };
                 }
 
-                const useLocal = confirm(
-                    '检测到本地和云端数据冲突。\n\n确定：用本地数据覆盖云端。\n取消：继续选择是否采用云端数据。'
-                );
-
-                if (useLocal) {
-                    const sha = await writeRemoteState(localSnapshot, remote.sha);
-                    recordSynced(localSnapshot, sha);
-                    setCloudStatus('online', '已连接');
-                    showToast('已用本地数据覆盖云端', 'success');
-                    return { ok: true, conflict: false, uploadedFingerprint: localFingerprint };
-                }
-
-                const useRemote = confirm('是否采用云端数据并覆盖当前本地内容？');
-                if (useRemote) return adoptRemote(remote, true);
-
-                showToast('已取消同步，数据未被覆盖', 'info');
-                return { ok: false, conflict: true };
+                throw new Error('多次重试后仍无法完成同步');
             }
 
             async function syncToCloud(showMessage = true, interactive = showMessage) {
                 if (!isConfigValid()) {
-                    showToast('请先完成 GitHub 配置', 'error');
+                    if (showMessage) showToast('请先完成 GitHub 配置', 'error');
                     return false;
                 }
 
                 if (isSyncing) {
                     syncQueued = true;
+                    queuedSyncShowMessage = queuedSyncShowMessage || showMessage;
+                    queuedSyncInteractive = queuedSyncInteractive || interactive;
                     return false;
                 }
 
@@ -3334,26 +3937,34 @@
                     result = await performSync({ showMessage, interactive });
                 } catch (error) {
                     console.error('同步失败:', error);
-                    setCloudStatus('offline', error.status === 409 ? '存在冲突' : '同步失败');
-                    showToast(`同步失败：${formatSyncError(error)}`, 'error');
-                    result = { ok: false, conflict: error.status === 409 };
+                    setCloudStatus('offline', isWriteConflictError(error) ? '存在冲突' : '同步失败');
+                    if (showMessage) showToast(`同步失败：${formatSyncError(error)}`, 'error');
+                    result = { ok: false, conflict: isWriteConflictError(error) };
                 } finally {
                     isSyncing = false;
                     syncBtn.disabled = false;
                 }
 
                 if (
-                    result.uploadedFingerprint &&
-                    getFingerprint(state) !== result.uploadedFingerprint
+                    result.syncedFingerprint &&
+                    getFingerprint(state) !== result.syncedFingerprint
                 ) {
                     syncQueued = true;
                 }
 
-                if (syncQueued && !result.conflict) {
+                if (syncQueued) {
+                    const nextShowMessage = queuedSyncShowMessage;
+                    const nextInteractive = queuedSyncInteractive;
                     syncQueued = false;
-                    setTimeout(() => syncToCloud(false, false), 0);
-                } else if (result.conflict) {
-                    syncQueued = false;
+                    queuedSyncShowMessage = false;
+                    queuedSyncInteractive = false;
+
+                    if (!result.conflict || nextInteractive) {
+                        setTimeout(
+                            () => syncToCloud(nextShowMessage, nextInteractive),
+                            0
+                        );
+                    }
                 }
 
                 return result.ok;
@@ -3368,7 +3979,41 @@
                 }, AUTO_SYNC_DELAY);
             }
 
+            function clearPassiveSyncTimer() {
+                if (passiveSyncTimer !== null) {
+                    clearTimeout(passiveSyncTimer);
+                    passiveSyncTimer = null;
+                }
+            }
+
+            function wakePassiveSync() {
+                if (
+                    !isConfigValid() ||
+                    document.hidden ||
+                    isSyncing ||
+                    !editModal.classList.contains('hidden') ||
+                    !configModal.classList.contains('hidden')
+                ) {
+                    return;
+                }
+
+                clearPassiveSyncTimer();
+                passiveSyncTimer = setTimeout(() => {
+                    passiveSyncTimer = null;
+                    const now = Date.now();
+                    if (now - lastPassiveSyncAt < PASSIVE_SYNC_MIN_INTERVAL) return;
+                    lastPassiveSyncAt = now;
+                    syncToCloud(false, false);
+                }, PASSIVE_SYNC_DELAY);
+            }
+
             function markLocalChange() {
+                localMutationVersion += 1;
+                syncMeta.dirty = true;
+                saveSyncMeta();
+
+                if (isSyncing) syncQueued = true;
+
                 if (isConfigValid()) {
                     setCloudStatus('offline', '待同步');
                     lastSyncTime.textContent = '有未同步修改';
@@ -3603,6 +4248,13 @@
                 backToTopBtn.classList.toggle('visible', window.scrollY > 180);
             }
 
+            window.addEventListener('online', wakePassiveSync);
+            window.addEventListener('focus', wakePassiveSync);
+            window.addEventListener('pageshow', wakePassiveSync);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') wakePassiveSync();
+            });
+
             window.addEventListener('scroll', updateBackToTopVisibility, { passive: true });
             window.addEventListener('resize', applyMobileStationContinuationAlignment, { passive: true });
             if (typeof mobileStationMedia.addEventListener === 'function') {
@@ -3638,10 +4290,20 @@
             await initPersistentStorage();
             loadConfig();
             loadSyncMeta();
+            loadSyncBase();
             loadStateFromStorage();
             loadEmbeddedBackup();
             await autoImportRailData();
-            updateLastSyncDisplay();
+
+            if (
+                syncMeta.target === getSyncTarget() &&
+                typeof syncMeta.lastFingerprint === 'string'
+            ) {
+                syncMeta.dirty = getFingerprint(state) !== syncMeta.lastFingerprint;
+                saveSyncMeta();
+            } else {
+                updateLastSyncDisplay();
+            }
             updateBackToTopVisibility();
 
             if (isConfigValid()) {
