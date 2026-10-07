@@ -993,8 +993,8 @@
                 box-sizing: border-box;
                 width: var(--station-wrap-anchor-width, 100%);
                 max-width: 100%;
-                padding-left: 0;
-                text-indent: 0;
+                padding-left: var(--station-continuation-indent, 0px);
+                text-indent: calc(-1 * var(--station-continuation-indent, 0px));
                 text-align: left;
                 text-align-last: right;
                 white-space: normal;
@@ -2144,6 +2144,11 @@
                         const anchorWidth = measureFirstVisualLineRight(element, firstLineEnd);
                         if (!(anchorWidth > 0)) return;
 
+                        const starEnd = fullText.indexOf('★') + 1;
+                        const continuationIndent = measureFirstVisualLineRight(element, starEnd);
+                        if (!(continuationIndent > 0) || continuationIndent >= anchorWidth) return;
+
+                        element.style.setProperty('--station-continuation-indent', `${continuationIndent}px`);
                         element.style.setProperty('--station-wrap-anchor-width', `${anchorWidth}px`);
                         element.classList.add('station-wrap-aligned');
                     });
